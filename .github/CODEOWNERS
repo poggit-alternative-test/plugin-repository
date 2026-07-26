@@ -1,0 +1,72 @@
+# CODEOWNERS for Axolotl Plugin Repository
+#
+# Defines who reviews what in the repository.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository-about-code-owners
+
+# ============================================================
+# Default owners for everything
+# ============================================================
+*                       @axolotl/core-team
+
+# ============================================================
+# Plugin Registry
+# All plugin submissions require plugin-review-team approval
+# ============================================================
+/registry/plugins/         @axolotl/plugin-review-team
+
+# ============================================================
+# Documentation
+# ============================================================
+/docs/                    @axolotl/docs-review
+
+# ============================================================
+# GitHub Workflows
+# ============================================================
+/.github/workflows/validate-submission.yml   @axolotl/security-team @axolotl/plugin-review-team
+/.github/workflows/build-trusted.yml         @axolotl/security-team
+/.github/workflows/publish-release.yml      @axolotl/security-team
+/.github/workflows/materialize-storage.yml  @axolotl/security-team
+/.github/CODEOWNERS                          @axolotl/core-team
+
+# ============================================================
+# Schemas
+# ============================================================
+/schemas/                 @axolotl/security-team
+
+# ============================================================
+# Tools
+# ============================================================
+/tools/                   @axolotl/security-team
+
+# ============================================================
+# Website
+# ============================================================
+/website/                 @axolotl/docs-review
+
+# ============================================================
+# REVIEW REQUIREMENTS
+#
+# For plugin submissions:
+#
+# 1. All CI checks must pass
+# 2. At least ONE member of @axolotl/plugin-review-team must approve
+# 3. Human security review completed
+# 4. All critical issues resolved
+# 5. Exact SHA recorded in registry
+#
+# Approvals from CODEOWNERS are ONE requirement,
+# not the ONLY requirement.
+# ============================================================
+
+# ============================================================
+# axolotl-pm-pl ORGANIZATION (not in this repo)
+#
+# The @axolotl/plugin-storage team has access to axolotl-pm-pl
+# for:
+# - Creating/updating plugin storage repositories
+# - Creating releases
+# - Publishing artifacts
+#
+# Developers are NOT automatically granted access.
+# Reviewers do NOT automatically have write access.
+# ============================================================

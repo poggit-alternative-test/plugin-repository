@@ -1,0 +1,9 @@
+# This directory contains plugin registry entries.
+#
+# Each plugin has its own YAML file named after the plugin.
+# Example: topstats.yaml, economy.yaml
+#
+# DO NOT add plugins directly to this directory.
+# Submit a plugin via Pull Request.
+#
+# See: ../docs/SUBMISSION.md

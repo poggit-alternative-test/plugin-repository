@@ -1,0 +1,12 @@
+schema_version: 1
+version: 2.1.0
+source:
+  upstream_commit: b93f1e987654321abcdef123456789abcdef1234
+storage:
+  repository: axolotl-pm-pl/TopStats
+  commit: b93f1e987654321abcdef123456789abcdef1234
+review:
+  pull_request: 58
+  reviewer: axolotl-reviewer
+  approved_at: 2026-08-05T09:15:00Z
+status: materialized

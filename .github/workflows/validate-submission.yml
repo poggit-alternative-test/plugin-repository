@@ -1,0 +1,140 @@
+name: Validate Plugin Submission
+
+# ============================================================
+# VALIDATION WORKFLOW (Untrusted Zone)
+#
+# This workflow runs on ALL pull requests including forks.
+# NO SECRETS are available to this workflow.
+# NO WRITE OPERATIONS are performed.
+# ============================================================
+
+on:
+  pull_request:
+    paths:
+      - 'registry/plugins/*.yaml'
+    branches:
+      - main
+
+# Security: Explicit minimal permissions
+permissions:
+  contents: read        # Read plugin repository
+  pull-requests: write   # Post validation status
+
+# Concurrency: Only run latest PR push
+concurrency:
+  group: validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # Job 1: Repository Validation
+  # ============================================================
+  validate-repository:
+    name: Validate Repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (this repository)
+        uses: actions/checkout@v4
+
+      - name: Extract repository info
+        id: info
+        run: |
+          # Read plugin name from changed file
+          PLUGIN_FILE=$(git diff --name-only ${{ github.event.pull_request.base.sha }} HEAD | grep '^registry/plugins/.*\.yaml$' | head -1)
+          echo "plugin_file=$PLUGIN_FILE" >> $GITHUB_OUTPUT
+          echo "plugin_name=$(basename $PLUGIN_FILE .yaml)" >> $GITHUB_OUTPUT
+
+      - name: Validate repository URL
+        run: |
+          echo "TODO: Implement repository validation"
+          echo "- Check repository exists"
+          echo "- Check repository is public"
+          echo "- Check branch exists"
+
+      - name: Report repository validation
+        run: |
+          echo "Repository validation: STUB - to be implemented"
+
+  # ============================================================
+  # Job 2: Plugin.yml Validation
+  # ============================================================
+  validate-plugin-yml:
+    name: Validate plugin.yml
+    runs-on: ubuntu-latest
+    needs: validate-repository
+    steps:
+      - name: Checkout plugin repository
+        run: |
+          echo "TODO: Fetch plugin.yml from developer repository"
+          echo "- Repository: from registry entry"
+          echo "- Branch: from registry entry"
+          echo "- File: plugin.yml"
+
+      - name: Validate plugin.yml structure
+        run: |
+          echo "TODO: Implement plugin.yml validation"
+          echo "- Syntax validation"
+          echo "- Required fields check"
+          echo "- Version format validation"
+          echo "- API version check"
+
+  # ============================================================
+  # Job 3: Security Scan
+  # ============================================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: validate-plugin-yml
+    steps:
+      - name: Checkout source
+        run: |
+          echo "TODO: Clone and scan plugin source"
+
+      - name: Scan for dangerous patterns
+        run: |
+          echo "TODO: Implement security scanning"
+          echo "- Check for obfuscated code"
+          echo "- Check for eval, base64_decode"
+          echo "- Check for shell commands"
+          echo "- Flag for human review"
+
+  # ============================================================
+  # Job 4: Build Feasibility
+  # ============================================================
+  validate-build:
+    name: Validate Build Feasibility
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Test PHAR build
+        run: |
+          echo "TODO: Implement build validation"
+          echo "- Check composer.json if present"
+          echo "- Attempt basic PHAR creation"
+          echo "- Verify output structure"
+
+  # ============================================================
+  # Summary Job
+  # ============================================================
+  validation-summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [validate-repository, validate-plugin-yml, security-scan, validate-build]
+    if: always()
+    steps:
+      - name: Report results
+        run: |
+          echo "=================================="
+          echo "Validation Summary"
+          echo "=================================="
+          echo "This is a STUB workflow."
+          echo "Full implementation in Milestone 3."
+          echo ""
+          echo "When implemented, this workflow will:"
+          echo "1. Check repository accessibility"
+          echo "2. Validate plugin.yml"
+          echo "3. Scan for security issues"
+          echo "4. Verify build feasibility"
+          echo ""
+          echo "IMPORTANT: CI passing != Approved"
+          echo "Human review is ALWAYS required."

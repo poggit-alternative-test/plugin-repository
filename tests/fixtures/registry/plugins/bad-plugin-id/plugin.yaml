@@ -1,0 +1,5 @@
+schema_version: 1
+id: BadPlugin
+upstream:
+  repository: developer/BadPlugin
+  branch: main

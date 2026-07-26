@@ -1,0 +1,5 @@
+schema_version: 1
+id: bad-version
+upstream:
+  repository: developer/bad-version
+  branch: main

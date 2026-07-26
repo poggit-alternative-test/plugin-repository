@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axolotl-pm.github.io/schemas/plugin-submission.schema.json",
+  "title": "Plugin Submission",
+  "description": "Developer-controlled proposal for plugin submission to Axolotl Plugin Repository",
+  "version": 1,
+  "type": "object",
+  "required": ["upstream"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version - must be explicitly declared"
+    },
+    "upstream": {
+      "$ref": "#/$defs/upstream"
+    }
+  },
+  "$defs": {
+    "upstream": {
+      "type": "object",
+      "required": ["repository"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?/[a-zA-Z0-9._-]+$",
+          "description": "GitHub repository in owner/name format"
+        },
+        "branch": {
+          "type": "string",
+          "default": "main",
+          "description": "Target branch (defaults to main)"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "@axolotl/plugin-repository",
+  "version": "0.1.0",
+  "description": "Tools for the Axolotl Plugin Repository",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "tools/*"
+  ],
+  "scripts": {
+    "validate": "npm run validate --workspace=tools/validator",
+    "build": "npm run build --workspace=tools/builder",
+    "generate": "npm run generate --workspace=tools/registry-generator",
+    "registry:validate": "tsx src/cli/validate-registry.ts",
+    "submission:inspect": "tsx src/cli/inspect-submission.ts",
+    "test": "vitest run",
+    "test:registry": "vitest run tests/registry",
+    "test:submission": "vitest run tests/submission",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.6.1",
+    "yaml": "^2.3.0",
+    "zod": "^3.22.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@types/tar": "^6.1.13",
+    "adm-zip": "^0.6.0",
+    "tar": "^7.5.22"
+  }
+}

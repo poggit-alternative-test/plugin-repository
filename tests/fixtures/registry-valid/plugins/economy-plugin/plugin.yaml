@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "economy-plugin",
+  "upstream": {
+    "repository": "devfund/EconomyAPI",
+    "branch": "main"
+  },
+  "storage": {
+    "repository": "axolotl-pm-pl/devfund-EconomyAPI"
+  }
+}

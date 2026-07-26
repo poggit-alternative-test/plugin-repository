@@ -1,0 +1,5 @@
+schema_version: 1
+id: bad-repo-format
+upstream:
+  repository: https://github.com/developer/bad-repo
+  branch: main

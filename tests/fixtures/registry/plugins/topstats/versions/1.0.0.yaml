@@ -1,0 +1,17 @@
+schema_version: 1
+version: 1.0.0
+source:
+  upstream_commit: d58e3f987654321abcdef123456789abcdef1234
+storage:
+  repository: axolotl-pm-pl/TopStats
+  commit: d58e3f987654321abcdef123456789abcdef1234
+review:
+  pull_request: 30
+  reviewer: axolotl-reviewer
+  approved_at: 2026-06-15T10:00:00Z
+artifact:
+  release_tag: v1.0.0
+  file: TopStats.phar
+  sha256: b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3
+  published_at: 2026-06-15T11:00:00Z
+status: deprecated

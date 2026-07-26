@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axolotl-pm.github.io/schemas/plugin.schema.json",
+  "title": "Plugin Registry Entry",
+  "description": "Canonical plugin identity in Axolotl Plugin Registry",
+  "version": 1,
+  "type": "object",
+  "required": ["schema_version", "id", "upstream"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version - must be explicitly declared"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Stable plugin identifier (lowercase alphanumeric with hyphens)"
+    },
+    "upstream": {
+      "$ref": "#/$defs/upstream"
+    },
+    "storage": {
+      "$ref": "#/$defs/storage"
+    }
+  },
+  "$defs": {
+    "upstream": {
+      "type": "object",
+      "required": ["repository"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?/[a-zA-Z0-9._-]+$",
+          "description": "GitHub repository in owner/name format"
+        },
+        "branch": {
+          "type": "string",
+          "default": "main",
+          "description": "Target branch for releases"
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^axolotl-pm-pl/[a-zA-Z0-9._-]+$",
+          "description": "Storage repository in axolotl-pm-pl"
+        }
+      },
+      "description": "Populated after storage materialization"
+    }
+  }
+}

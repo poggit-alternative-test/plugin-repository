@@ -1,0 +1,319 @@
+# Submission Check Workflow
+#
+# Processes plugin submission Pull Requests for security validation.
+#
+# SECURITY MODEL:
+# - Uses pull_request trigger (not pull_request_target)
+# - No privileged secrets exposed to PR code
+# - Trusted tooling from base branch only
+# - Only submission file comes from PR
+#
+# This workflow runs against UNTRUSTED contributor code.
+# All plugin repository content is treated as attacker-controlled.
+
+name: Submission Check
+
+on:
+  pull_request:
+    paths:
+      - 'submissions/**'
+      - '!submissions/**/*.md'
+    types: [opened, synchronize, reopened]
+
+# Limit concurrent runs to prevent resource exhaustion
+concurrency:
+  group: submission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# Minimal permissions - only what's needed
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+jobs:
+  validate-submission:
+    name: Validate Submission
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ============================================================
+      # STEP 1: Checkout the base (trusted) branch
+      # ============================================================
+      # This ensures we use the trusted version of our tooling,
+      # not anything potentially modified by the PR contributor.
+      - name: Checkout base branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.base_ref }}
+          fetch-depth: 1
+
+      # ============================================================
+      # STEP 2: Setup Node.js with trusted tooling
+      # ============================================================
+      - name: Setup Node.js
+        uses: actions/setup-node@0a44ba7841725637e19ef6efaadb6f5f3ad9b18 # v4.2.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      # Install dependencies from TRUSTED lockfile only
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # ============================================================
+      # STEP 3: Get changed files safely
+      # ============================================================
+      # Use GitHub's safe diff API - do NOT trust PR-provided file lists
+      - name: Get changed files
+        id: changed-files
+        uses: actions/github-script@7a5c598405927d774a95c935eb28a1293c2865db # v7.0.1
+        with:
+          script: |
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100
+            });
+
+            const changedFiles = files.map(f => ({
+              filename: f.filename,
+              status: f.status,
+              additions: f.additions,
+              deletions: f.deletions
+            }));
+
+            // Return for use in later steps
+            return {
+              files: changedFiles,
+              count: files.length
+            };
+
+      # ============================================================
+      # STEP 4: Validate PR change scope
+      # ============================================================
+      # Reject PRs that modify anything other than submissions/
+      - name: Validate PR scope
+        id: validate-scope
+        run: |
+          CHANGED_FILES='${{ steps.changed-files.outputs.result }}'
+
+          # Parse the JSON output
+          echo "$CHANGED_FILES" | jq -r '.files[] | "\(.status) \(.filename)"' > /tmp/changed_files.txt
+
+          # Check each changed file
+          while IFS= read -r line; do
+            STATUS=$(echo "$line" | cut -d' ' -f1)
+            FILE=$(echo "$line" | cut -d' ' -f2-)
+
+            # Skip deleted files
+            if [ "$STATUS" = "removed" ]; then
+              continue
+            fi
+
+            # Must be under submissions/
+            if ! echo "$FILE" | grep -q "^submissions/"; then
+              echo "ERROR: Modified file outside submissions/: $FILE"
+              echo "PR scope validation FAILED"
+              exit 1
+            fi
+
+            # Cannot modify critical paths
+            case "$FILE" in
+              src/*|.github/*|registry/*|schemas/*|package.json|package-lock.json)
+                echo "ERROR: Modified critical file: $FILE"
+                echo "PR scope validation FAILED"
+                exit 1
+                ;;
+            esac
+          done < /tmp/changed_files.txt
+
+          echo "PR scope validation PASSED"
+          echo "Changed files:"
+          echo "$CHANGED_FILES" | jq -r '.files[] | "  \(.status): \(.filename)"'
+
+      # ============================================================
+      # STEP 5: Extract submission file from PR
+      # ============================================================
+      # Only get the actual submission content, not any modified tooling
+      - name: Get submission file
+        id: get-submission
+        run: |
+          CHANGED_FILES='${{ steps.changed-files.outputs.result }}'
+
+          # Find submission files in the PR
+          SUBMISSION_FILES=$(echo "$CHANGED_FILES" | jq -r '.files[] | select(.filename | startswith("submissions/")) | .filename')
+
+          # Count submission files
+          COUNT=$(echo "$SUBMISSION_FILES" | grep -c '\.ya\?ml$' || true)
+
+          if [ -z "$SUBMISSION_FILES" ]; then
+            echo "ERROR: No submission YAML file found in PR"
+            exit 1
+          fi
+
+          echo "Found submission files:"
+          echo "$SUBMISSION_FILES" | while read f; do echo "  - $f"; done
+
+          # Should have exactly one submission file for new submissions
+          if [ "$COUNT" -gt 1 ]; then
+            echo "ERROR: Multiple submission files found. Only one submission per PR is allowed."
+            echo "$SUBMISSION_FILES"
+            exit 1
+          fi
+
+          # Get the submission file content from PR
+          # Use the PR file content API which is safe
+          for FILE in $SUBMISSION_FILES; do
+            # Extract just the filename
+            BASENAME=$(basename "$FILE")
+
+            # Get file content from PR
+            CONTENT=$(gh pr view ${{ github.event.pull_request.number }} --json body -q .body 2>/dev/null || echo "")
+
+            # Actually, we need to get the file from the PR diff
+            # Use the files API
+            FILE_CONTENT=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" | jq -r ".[] | select(.filename == \"$FILE\") | .patch // empty" 2>/dev/null || echo "")
+
+            if [ -n "$FILE_CONTENT" ]; then
+              # Create submissions directory
+              mkdir -p submissions
+
+              # Write submission file
+              echo "$FILE_CONTENT" > "submissions/$BASENAME"
+              echo "Extracted: submissions/$BASENAME"
+            fi
+          done
+
+          # Verify submission file exists
+          if [ ! -f "submissions/"*.yaml ] && [ ! -f "submissions/"*.yml ]; then
+            echo "ERROR: Could not extract submission file"
+            exit 1
+          fi
+
+      # ============================================================
+      # STEP 6: Run submission inspection
+      # ============================================================
+      # This uses the TRUSTED codebase's submission inspector
+      # The inspection tool is from the base branch, not from the PR
+      # Only the submission file content comes from the PR
+      - name: Inspect submission
+        id: inspect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the submission file path
+          SUBMISSION_FILE=$(ls submissions/*.yaml submissions/*.yml 2>/dev/null | head -1)
+
+          if [ -z "$SUBMISSION_FILE" ]; then
+            echo "ERROR: No submission file found"
+            exit 1
+          fi
+
+          echo "Inspecting submission: $SUBMISSION_FILE"
+          echo ""
+
+          # Run the inspection
+          if npm run submission:inspect -- "$SUBMISSION_FILE"; then
+            echo ""
+            echo "INSPECTION_RESULT=success" >> $GITHUB_ENV
+          else
+            EXIT_CODE=$?
+            echo ""
+            echo "INSPECTION_RESULT=failed" >> $GITHUB_ENV
+            exit $EXIT_CODE
+          fi
+
+      # ============================================================
+      # STEP 7: Post results as PR comment
+      # ============================================================
+      - name: Post results
+        if: always()
+        uses: actions/github-script@7a5c598405927d774a95c935eb28a1293c2865db # v7.0.1
+        with:
+          script: |
+            const inspectionResult = process.env.INSPECTION_RESULT || 'failed';
+
+            // Get the inspection output
+            const fs = require('fs');
+            let report = '';
+            try {
+              report = fs.readFileSync(process.env.GITHUB_STEP_SUMMARY || '/dev/null', 'utf8');
+            } catch (e) {
+              // Summary not available
+            }
+
+            // Determine status emoji
+            const statusEmoji = inspectionResult === 'success' ? '✅' : '❌';
+            const statusText = inspectionResult === 'success' ? 'Ready for Review' : 'Needs Attention';
+
+            // Create comment body
+            const body = `
+## Axolotl Submission Check ${statusEmoji}
+
+**Status:** ${statusText}
+
+**Submission:** \`submissions/*.yaml\`
+
+${inspectionResult === 'failed' ? '**Action Required:** Please review the inspection output above and address any errors before resubmitting.' : ''}
+
+---
+
+> ⚠️ **Note:** This is an automated inspection. Human security review is still required before approval.
+
+---
+
+*Generated by submission-check workflow*
+            `;
+
+            // Post comment
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: body
+              });
+            } catch (e) {
+              console.log('Could not post comment:', e.message);
+            }
+
+            // Update check run status
+            const checkStatus = inspectionResult === 'success' ? 'success' : 'failure';
+            const checkConclusion = inspectionResult === 'success' ? 'success' : 'action_required';
+
+            try {
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'Submission Inspection',
+                head_sha: context.payload.pull_request.head.sha,
+                status: 'completed',
+                conclusion: checkConclusion,
+                output: {
+                  title: `Submission Inspection ${statusEmoji}`,
+                  summary: inspectionResult === 'success'
+                    ? 'Submission is valid and ready for human review.'
+                    : 'Submission inspection found issues that need to be addressed.',
+                  text: 'See workflow logs for details.'
+                }
+              });
+            } catch (e) {
+              console.log('Could not create check run:', e.message);
+            }
+
+      # ============================================================
+      # STEP 8: Set PR status
+      # ============================================================
+      - name: Update commit status
+        if: always()
+        env:
+          INSPECTION_RESULT: ${{ env.INSPECTION_RESULT || 'failed' }}
+        run: |
+          if [ "$INSPECTION_RESULT" = "success" ]; then
+            gh pr comment ${{ github.event.pull_request.number }} --body "✅ Submission inspection passed. Ready for human review."
+          else
+            gh pr comment ${{ github.event.pull_request.number }} --body "❌ Submission inspection found issues. Please review the workflow logs and fix any errors."
+          fi

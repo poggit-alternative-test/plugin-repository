@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "topstats",
+  "upstream": {
+    "repository": "nicholass003/TopStats",
+    "branch": "main"
+  },
+  "storage": {
+    "repository": "axolotl-pm-pl/TopStats"
+  }
+}

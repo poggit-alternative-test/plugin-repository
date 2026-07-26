@@ -1,0 +1,17 @@
+schema_version: 1
+version: 5.0.0
+source:
+  upstream_commit: e69de47b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f
+storage:
+  repository: axolotl-pm-pl/devfund-EconomyAPI
+  commit: e69de47b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f
+review:
+  pull_request: 100
+  reviewer: axolotl-reviewer
+  approved_at: 2026-09-01T14:00:00Z
+artifact:
+  release_tag: v5.0.0
+  file: EconomyAPI.phar
+  sha256: c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4
+  published_at: 2026-09-01T15:00:00Z
+status: published

@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://axolotl-pm.github.io/schemas/version.schema.json",
+  "title": "Plugin Version Record",
+  "description": "Canonical immutable version record in Axolotl Plugin Registry",
+  "version": 1,
+  "type": "object",
+  "required": ["schema_version", "version", "source", "review", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version - must be explicitly declared"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9]+)?$",
+      "description": "Semantic version"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "storage": {
+      "$ref": "#/$defs/storage"
+    },
+    "review": {
+      "$ref": "#/$defs/review"
+    },
+    "artifact": {
+      "$ref": "#/$defs/artifact"
+    },
+    "revoked_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when version was revoked"
+    },
+    "removed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when version was removed"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Reason for revocation or removal"
+    },
+    "status": {
+      "$ref": "#/$defs/status"
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "required": ["upstream_commit"],
+      "additionalProperties": false,
+      "properties": {
+        "upstream_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Exact SHA reviewed by human"
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "required": ["repository", "commit"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^axolotl-pm-pl/[a-zA-Z0-9._-]+$",
+          "description": "Storage repository"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "SHA as preserved in storage"
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": ["pull_request", "reviewer", "approved_at"],
+      "additionalProperties": false,
+      "properties": {
+        "pull_request": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "PR number where approval was given"
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "GitHub username of reviewer"
+        },
+        "approved_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of approval"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["release_tag", "file", "sha256", "published_at"],
+      "additionalProperties": false,
+      "properties": {
+        "release_tag": {
+          "type": "string",
+          "pattern": "^v\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9]+)?$",
+          "description": "GitHub release tag"
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "PHAR filename"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 of PHAR"
+        },
+        "published_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Publication timestamp"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "materialized",
+        "published",
+        "deprecated",
+        "revoked",
+        "removed"
+      ],
+      "description": "Canonical lifecycle status"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "approved" } }
+      },
+      "then": {
+        "properties": {
+          "storage": { "not": {} },
+          "artifact": { "not": {} }
+        },
+        "required": ["source", "review"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "materialized" } }
+      },
+      "then": {
+        "properties": {
+          "artifact": { "not": {} }
+        },
+        "required": ["source", "review", "storage"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "published" } }
+      },
+      "then": {
+        "required": ["source", "review", "storage", "artifact"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "revoked" } }
+      },
+      "then": {
+        "required": ["source", "review", "storage", "artifact", "revoked_at"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "removed" } }
+      },
+      "then": {
+        "required": ["source", "review", "storage", "artifact", "removed_at"]
+      }
+    }
+  ]
+}
