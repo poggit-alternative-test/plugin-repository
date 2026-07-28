@@ -1,0 +1,7 @@
+schemaVersion: 1
+candidateIdentity: testplugin@owner/repo#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+pluginSlug: testplugin
+upstreamRepository: owner/repo
+upstreamBranch: main
+sha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+inspectionTimestamp: '2024-01-01T00:00:00.000Z'

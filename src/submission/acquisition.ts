@@ -12,15 +12,17 @@
  * - Symlink handling
  * - No execution
  * - Cleanup after run
+ * - Fail closed on security violations
  */
 
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'fs';
-import { join, relative, resolve, isAbsolute, sep } from 'path';
+import { join, relative, resolve, sep } from 'path';
 import {
   SUBMISSION_CODES,
   submissionError,
   submissionWarning,
   type SubmissionDiagnostic,
+  DiagnosticSeverity,
 } from './diagnostics.js';
 import type { GitHubClient } from './github.js';
 
@@ -127,21 +129,145 @@ export function isPathEscape(filePath: string, destination: string): boolean {
 }
 
 // ============================================================
-// Bounded Download
+// Archive URL Validation
 // ============================================================
 
 /**
- * Download a file with bounded size checks.
- * Reads in chunks and aborts if size limit is exceeded.
+ * Validate that an archive URL is safe to fetch.
+ *
+ * Production archive download must not become a generic SSRF primitive.
+ *
+ * Allowed:
+ * - HTTPS URLs from api.github.com
+ * - HTTPS URLs from github.com (for archives)
+ * - URLs from allowed hosts (configurable)
+ *
+ * Rejected:
+ * - HTTP (non-HTTPS) URLs
+ * - localhost, 127.0.0.1
+ * - Private IP ranges
+ * - URLs with credentials
+ * - file:// URLs
+ * - Unknown hosts
+ */
+export interface ArchiveUrlValidation {
+  valid: boolean;
+  error?: string;
+  normalizedUrl?: string;
+}
+
+const ALLOWED_ARCHIVE_HOSTS = new Set([
+  'api.github.com',
+  'codeload.github.com',
+  'github.com',
+]);
+
+const BLOCKED_HOSTS = new Set([
+  'localhost',
+  'localhost.localdomain',
+]);
+
+const BLOCKED_PATTERNS = [
+  /^127\.\d+\.\d+\.\d+$/,           // IPv4 loopback
+  /^10\.\d+\.\d+\.\d+$/,             // RFC 1918 private
+  /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/, // RFC 1918 private
+  /^192\.168\.\d+\.\d+$/,           // RFC 1918 private
+  /^169\.254\.\d+\.\d+$/,           // Link-local
+  /^0\.0\.0\.0$/,                    // All zeros
+  /^::1$/,                          // IPv6 loopback
+  /^fe80:/i,                        // IPv6 link-local
+  /^fc00:/i,                        // IPv6 unique local
+  /^fd00:/i,                        // IPv6 unique local
+];
+
+export function validateArchiveUrl(url: string, allowLocalhost: boolean = false): ArchiveUrlValidation {
+  // Must be a valid URL
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+
+  // Must be HTTPS in production
+  if (parsedUrl.protocol !== 'https:') {
+    // Allow HTTP only for localhost in test mode
+    if (allowLocalhost && parsedUrl.protocol === 'http:' && isLocalhost(parsedUrl.hostname)) {
+      return { valid: true, normalizedUrl: url };
+    }
+    return { valid: false, error: `Non-HTTPS URL not allowed: ${parsedUrl.protocol}` };
+  }
+
+  // Check for credentials in URL
+  if (parsedUrl.username || parsedUrl.password) {
+    return { valid: false, error: 'URLs with credentials are not allowed' };
+  }
+
+  // Check hostname
+  const hostname = parsedUrl.hostname.toLowerCase();
+
+  // Block specific hostnames
+  if (BLOCKED_HOSTS.has(hostname)) {
+    return { valid: false, error: `Blocked hostname: ${hostname}` };
+  }
+
+  // Block IP patterns
+  for (const pattern of BLOCKED_PATTERNS) {
+    if (pattern.test(hostname)) {
+      return { valid: false, error: `Blocked IP range: ${hostname}` };
+    }
+  }
+
+  // Allow known GitHub hosts
+  if (ALLOWED_ARCHIVE_HOSTS.has(hostname)) {
+    return { valid: true, normalizedUrl: url };
+  }
+
+  // Reject unknown hosts
+  return { valid: false, error: `Unknown archive host: ${hostname}` };
+}
+
+function isLocalhost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  return lower === 'localhost' || lower === '127.0.0.1' || lower === '::1';
+}
+
+// ============================================================
+// Bounded Download with Redirect Validation
+// ============================================================
+
+const MAX_REDIRECT_COUNT = 5;
+
+/**
+ * Download a file with bounded size checks and redirect validation.
+ *
+ * SECURITY: Every redirect destination is validated against the archive URL policy
+ * before being followed. This prevents SSRF via redirect attacks.
  */
 async function boundedDownload(
   url: string,
   destinationPath: string,
-  timeout: number = LIMITS.ARCHIVE_DOWNLOAD_TIMEOUT
+  timeout: number = LIMITS.ARCHIVE_DOWNLOAD_TIMEOUT,
+  allowLocalhost: boolean = false
 ): Promise<{ success: boolean; bytesRead: number; error?: string }> {
+  // Validate URL first
+  const urlValidation = validateArchiveUrl(url, allowLocalhost);
+  if (!urlValidation.valid) {
+    return { success: false, bytesRead: 0, error: `Unsafe archive URL: ${urlValidation.error}` };
+  }
+
   return new Promise((resolve) => {
     let bytesRead = 0;
     let aborted = false;
+    let redirectCount = 0;
+    let settled = false;
+
+    const settle = (result: { success: boolean; bytesRead: number; error?: string }) => {
+      if (!settled) {
+        settled = true;
+        resolve(result);
+      }
+    };
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
@@ -149,11 +275,75 @@ async function boundedDownload(
       controller.abort();
     }, timeout);
 
-    fetch(url, { signal: controller.signal })
-      .then(async (response) => {
+    async function fetchWithRedirectValidation(currentUrl: string): Promise<void> {
+      try {
+        // Use manual redirect handling to validate each destination
+        const response = await fetch(currentUrl, {
+          signal: controller.signal,
+          redirect: 'manual',
+        });
+
+        // Handle redirects manually with validation
+        if (response.status === 301 || response.status === 302 || response.status === 303 || response.status === 307 || response.status === 308) {
+          // Check redirect count limit
+          redirectCount++;
+          if (redirectCount > MAX_REDIRECT_COUNT) {
+            clearTimeout(timeoutId);
+            settle({
+              success: false,
+              bytesRead,
+              error: `Too many redirects (${redirectCount}), maximum allowed: ${MAX_REDIRECT_COUNT}`,
+            });
+            return;
+          }
+
+          // Get redirect location from Location header
+          const location = response.headers.get('location');
+          if (!location) {
+            clearTimeout(timeoutId);
+            settle({
+              success: false,
+              bytesRead,
+              error: `Redirect response with no Location header`,
+            });
+            return;
+          }
+
+          // Resolve relative redirect URLs
+          let redirectUrl: string;
+          try {
+            redirectUrl = new URL(location, currentUrl).toString();
+          } catch {
+            clearTimeout(timeoutId);
+            settle({
+              success: false,
+              bytesRead,
+              error: `Malformed redirect URL: ${location}`,
+            });
+            return;
+          }
+
+          // Validate redirect destination against archive URL policy
+          const redirectValidation = validateArchiveUrl(redirectUrl, allowLocalhost);
+          if (!redirectValidation.valid) {
+            clearTimeout(timeoutId);
+            settle({
+              success: false,
+              bytesRead,
+              error: `Redirect to unsafe destination rejected: ${redirectValidation.error}`,
+            });
+            return;
+          }
+
+          // Follow the validated redirect
+          await fetchWithRedirectValidation(redirectUrl);
+          return;
+        }
+
+        // Not a redirect - handle the response
         if (!response.ok) {
           clearTimeout(timeoutId);
-          resolve({ success: false, bytesRead: 0, error: `HTTP ${response.status}` });
+          settle({ success: false, bytesRead, error: `HTTP ${response.status}` });
           return;
         }
 
@@ -163,9 +353,9 @@ async function boundedDownload(
         // Early check if content-length exceeds limit
         if (archiveSize > LIMITS.MAX_ARCHIVE_SIZE) {
           clearTimeout(timeoutId);
-          resolve({
+          settle({
             success: false,
-            bytesRead: 0,
+            bytesRead,
             error: `Archive size ${archiveSize} exceeds limit ${LIMITS.MAX_ARCHIVE_SIZE}`,
           });
           return;
@@ -184,7 +374,7 @@ async function boundedDownload(
               if (done) {
                 clearTimeout(timeoutId);
                 writeStream.end();
-                resolve({ success: true, bytesRead });
+                settle({ success: true, bytesRead });
                 return;
               }
 
@@ -194,7 +384,11 @@ async function boundedDownload(
               if (bytesRead > LIMITS.MAX_ARCHIVE_SIZE) {
                 clearTimeout(timeoutId);
                 writeStream.close();
-                resolve({
+                // Clean up partial file on size limit
+                try {
+                  rmSync(destinationPath, { force: true });
+                } catch {}
+                settle({
                   success: false,
                   bytesRead,
                   error: `Download exceeded size limit: ${bytesRead} bytes`,
@@ -208,46 +402,102 @@ async function boundedDownload(
             clearTimeout(timeoutId);
             if (!aborted) {
               writeStream.close();
-              resolve({ success: false, bytesRead, error: e instanceof Error ? e.message : 'Download failed' });
+              // Clean up partial file on error
+              try {
+                rmSync(destinationPath, { force: true });
+              } catch {}
+              settle({ success: false, bytesRead, error: e instanceof Error ? e.message : 'Download failed' });
             }
           }
         }
 
         pump();
-      })
-      .catch((e) => {
+      } catch (e) {
         clearTimeout(timeoutId);
-        if (e.name === 'AbortError') {
-          resolve({
-            success: false,
-            bytesRead,
-            error: aborted
-              ? `Download exceeded size limit ${LIMITS.MAX_ARCHIVE_SIZE} bytes`
-              : `Download timed out after ${timeout}ms`,
-          });
+        if (e instanceof Error) {
+          if (e.name === 'AbortError') {
+            // Clean up partial file on abort
+            try {
+              rmSync(destinationPath, { force: true });
+            } catch {}
+            settle({
+              success: false,
+              bytesRead,
+              error: aborted
+                ? `Download exceeded size limit ${LIMITS.MAX_ARCHIVE_SIZE} bytes`
+                : `Download timed out after ${timeout}ms`,
+            });
+          } else {
+            // Clean up partial file on error
+            try {
+              rmSync(destinationPath, { force: true });
+            } catch {}
+            settle({ success: false, bytesRead, error: e.message });
+          }
         } else {
-          resolve({ success: false, bytesRead, error: e instanceof Error ? e.message : 'Download failed' });
+          settle({ success: false, bytesRead, error: 'Download failed' });
         }
-      });
+      }
+    }
+
+    // Start the fetch with redirect validation
+    fetchWithRedirectValidation(url).catch((e) => {
+      settle({ success: false, bytesRead, error: e instanceof Error ? e.message : 'Download failed' });
+    });
   });
 }
 
 // ============================================================
-// Archive Extraction (Simplified - uses adm-zip for now)
+// Archive Extraction (Fail-Closed)
 // ============================================================
 
 /**
- * Extract a tar.gz or zip archive with security checks.
- * For production use, consider using a streaming parser for better security.
+ * Fatal extraction errors that must cause immediate failure.
+ */
+enum FatalExtractionError {
+  PATH_TRAVERSAL = 'PATH_TRAVERSAL',
+  ABSOLUTE_PATH = 'ABSOLUTE_PATH',
+  SYMLINK_ESCAPE = 'SYMLINK_ESCAPE',
+  SIZE_LIMIT = 'SIZE_LIMIT',
+  FILE_COUNT_LIMIT = 'FILE_COUNT_LIMIT',
+  UNSUPPORTED_ARCHIVE = 'UNSUPPORTED_ARCHIVE',
+}
+
+interface ExtractionResult {
+  success: boolean;
+  files: string[];
+  symlinks: string[];
+  totalBytes: number;
+  diagnostics: SubmissionDiagnostic[];
+  fatalError?: FatalExtractionError;
+}
+
+/**
+ * Extract a zip archive with security checks.
+ * FAILS CLOSED on any security violation.
  */
 async function extractArchive(
   archivePath: string,
   destination: string
-): Promise<{ success: boolean; files: string[]; symlinks: string[]; totalBytes: number; diagnostics: SubmissionDiagnostic[] }> {
+): Promise<ExtractionResult> {
   const diagnostics: SubmissionDiagnostic[] = [];
   const extractedFiles: string[] = [];
   const extractedSymlinks: string[] = [];
   let totalBytes = 0;
+  let fatalError: FatalExtractionError | undefined;
+
+  // Clean up any previous partial extraction
+  const cleanUp = (): void => {
+    try {
+      if (existsSync(destination)) {
+        rmSync(destination, { recursive: true, force: true });
+      }
+    } catch {}
+  };
+
+  // Clean destination before extraction
+  cleanUp();
+  mkdirSync(destination, { recursive: true });
 
   try {
     // Dynamically import adm-zip
@@ -259,19 +509,26 @@ async function extractArchive(
     let extractedSize = 0;
 
     for (const entry of entries) {
+      // Check for fatal error - stop immediately
+      if (fatalError) {
+        break;
+      }
+
+      // Check file count limit
       if (fileCount >= LIMITS.MAX_FILE_COUNT) {
         diagnostics.push(
           submissionError(
             SUBMISSION_CODES.SOURCE_TOO_MANY_FILES,
-            `Too many files in archive: ${fileCount} files`
+            `Too many files in archive: ${fileCount} files (limit: ${LIMITS.MAX_FILE_COUNT})`
           )
         );
+        fatalError = FatalExtractionError.FILE_COUNT_LIMIT;
         break;
       }
 
       const entryPath = entry.entryName;
 
-      // Validate path security
+      // Validate path security - FATAL
       const safePath = validateExtractionPath(entryPath, destination);
       if (!safePath) {
         diagnostics.push(
@@ -280,22 +537,27 @@ async function extractArchive(
             `Blocked unsafe archive path: ${entryPath}`
           )
         );
-        continue;
+        fatalError = FatalExtractionError.PATH_TRAVERSAL;
+        break;
       }
 
-      // Handle symlinks
-      // adm-zip types don't fully expose symlink properties, use type assertion
+      // Handle symlinks - FATAL
       const entryAny = entry as unknown as { isSymbolicLink?: boolean; linkFileName?: string };
       if (entryAny.isSymbolicLink) {
         const target = entryAny.linkFileName;
-        if (target && !isSymlinkTargetSafe(target, destination)) {
+        if (!target) {
+          // Symlink with no target - skip but don't fail
+          continue;
+        }
+        if (!isSymlinkTargetSafe(target, destination)) {
           diagnostics.push(
             submissionError(
               SUBMISSION_CODES.SOURCE_SYMLINK_ESCAPE,
               `Blocked symlink escaping extraction directory: ${entryPath} -> ${target}`
             )
           );
-          continue;
+          fatalError = FatalExtractionError.SYMLINK_ESCAPE;
+          break;
         }
         extractedSymlinks.push(entryPath);
         continue;
@@ -309,27 +571,33 @@ async function extractArchive(
         continue;
       }
 
+      // Skip unsupported entry types (devices, etc.)
+      // AdmZip uses type flags that we check via isDirectory/isSymbolicLink
+      // Any other type should be skipped safely
+
       const entrySize = entry.header.size;
 
-      // Check individual file size
+      // Check individual file size - FATAL
       if (entrySize > LIMITS.MAX_FILE_SIZE) {
         diagnostics.push(
-          submissionWarning(
+          submissionError(
             SUBMISSION_CODES.SOURCE_TOO_LARGE,
-            `File exceeds size limit: ${entryPath} (${entrySize} bytes)`
+            `File exceeds size limit: ${entryPath} (${entrySize} bytes, limit: ${LIMITS.MAX_FILE_SIZE})`
           )
         );
-        continue;
+        fatalError = FatalExtractionError.SIZE_LIMIT;
+        break;
       }
 
-      // Check total extracted size
+      // Check total extracted size - FATAL
       if (extractedSize + entrySize > LIMITS.MAX_EXTRACTED_SIZE) {
         diagnostics.push(
           submissionError(
             SUBMISSION_CODES.SOURCE_TOO_LARGE,
-            `Extracted content exceeds size limit: ${extractedSize + entrySize} bytes`
+            `Extracted content exceeds size limit: ${extractedSize + entrySize} bytes (limit: ${LIMITS.MAX_EXTRACTED_SIZE})`
           )
         );
+        fatalError = FatalExtractionError.SIZE_LIMIT;
         break;
       }
 
@@ -341,13 +609,29 @@ async function extractArchive(
         totalBytes += entrySize;
         extractedFiles.push(relative(destination, safePath));
       } catch (e) {
+        // Extraction failed - treat as fatal
         diagnostics.push(
-          submissionWarning(
+          submissionError(
             SUBMISSION_CODES.SOURCE_PATH_TRAVERSAL,
-            `Failed to extract file: ${entryPath}`
+            `Failed to extract file: ${entryPath} - ${e instanceof Error ? e.message : 'Unknown error'}`
           )
         );
+        fatalError = FatalExtractionError.PATH_TRAVERSAL;
+        break;
       }
+    }
+
+    // If we encountered a fatal error, clean up and fail
+    if (fatalError) {
+      cleanUp();
+      return {
+        success: false,
+        files: [],
+        symlinks: [],
+        totalBytes: 0,
+        diagnostics,
+        fatalError,
+      };
     }
 
     return {
@@ -358,13 +642,21 @@ async function extractArchive(
       diagnostics,
     };
   } catch (e) {
+    cleanUp();
     diagnostics.push(
       submissionError(
         SUBMISSION_CODES.SOURCE_UNSUPPORTED_ARCHIVE,
         `Failed to extract archive: ${e instanceof Error ? e.message : 'Unknown error'}`
       )
     );
-    return { success: false, files: extractedFiles, symlinks: extractedSymlinks, totalBytes, diagnostics };
+    return {
+      success: false,
+      files: [],
+      symlinks: [],
+      totalBytes: 0,
+      diagnostics,
+      fatalError: FatalExtractionError.UNSUPPORTED_ARCHIVE,
+    };
   }
 }
 
@@ -380,6 +672,7 @@ async function extractArchive(
  * @param repo Repository name
  * @param sha Exact commit SHA
  * @param tempDir Temporary directory for extraction
+ * @param allowLocalhost For testing only - allows localhost URLs
  * @returns Acquisition result with file list
  */
 export async function acquireSource(
@@ -387,7 +680,8 @@ export async function acquireSource(
   owner: string,
   repo: string,
   sha: string,
-  tempDir: string
+  tempDir: string,
+  allowLocalhost: boolean = false
 ): Promise<SourceAcquisitionResult> {
   const diagnostics: SubmissionDiagnostic[] = [];
 
@@ -420,9 +714,21 @@ export async function acquireSource(
 
     const archiveUrl = archiveResult.data;
 
+    // Validate archive URL
+    const urlValidation = validateArchiveUrl(archiveUrl, allowLocalhost);
+    if (!urlValidation.valid) {
+      diagnostics.push(
+        submissionError(
+          SUBMISSION_CODES.SOURCE_PATH_TRAVERSAL,
+          `Unsafe archive URL rejected: ${urlValidation.error}`
+        )
+      );
+      return { success: false, diagnostics };
+    }
+
     // Download with bounded size
     archivePath = join(extractDir, 'archive.zip');
-    const downloadResult = await boundedDownload(archiveUrl, archivePath);
+    const downloadResult = await boundedDownload(archiveUrl, archivePath, LIMITS.ARCHIVE_DOWNLOAD_TIMEOUT, allowLocalhost);
 
     if (!downloadResult.success) {
       if (downloadResult.error?.includes('size limit')) {
@@ -430,6 +736,13 @@ export async function acquireSource(
           submissionError(
             SUBMISSION_CODES.SOURCE_TOO_LARGE,
             `Downloaded archive exceeds size limit: ${downloadResult.error}`
+          )
+        );
+      } else if (downloadResult.error?.includes('Unsafe')) {
+        diagnostics.push(
+          submissionError(
+            SUBMISSION_CODES.SOURCE_PATH_TRAVERSAL,
+            downloadResult.error
           )
         );
       } else {
@@ -444,29 +757,27 @@ export async function acquireSource(
     }
 
     // Extract the archive
-    // GitHub creates a root directory named "owner-repo-sha"
     const sourceDir = join(extractDir, 'source');
+    mkdirSync(sourceDir, { recursive: true });
 
-    // First, extract to temp location
-    const extractResult = await extractArchive(archivePath, extractDir);
+    const extractResult = await extractArchive(archivePath, sourceDir);
 
-    if (!extractResult.success || extractResult.diagnostics.some(d => d.code === SUBMISSION_CODES.SOURCE_PATH_TRAVERSAL)) {
-      diagnostics.push(...extractResult.diagnostics);
+    // Propagate all diagnostics
+    diagnostics.push(...extractResult.diagnostics);
+
+    // If extraction failed, fail the acquisition
+    if (!extractResult.success) {
       return { success: false, diagnostics };
     }
-
-    diagnostics.push(...extractResult.diagnostics);
 
     // Find the actual source root (GitHub creates a root directory)
     let actualSourceDir = sourceDir;
     try {
-      const entries = readdirSync(extractDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory() && entry.name !== 'source' && entry.name !== 'archive.zip') {
-          // This is the GitHub-created root directory
-          actualSourceDir = join(extractDir, entry.name);
-          break;
-        }
+      const entries = readdirSync(sourceDir, { withFileTypes: true });
+      const dirs = entries.filter((e) => e.isDirectory());
+      if (dirs.length === 1) {
+        // GitHub zipball creates a single root directory
+        actualSourceDir = join(sourceDir, dirs[0].name);
       }
     } catch {}
 
@@ -479,11 +790,6 @@ export async function acquireSource(
     }
 
     diagnostics.push(...analysis.diagnostics);
-
-    // Report symlinks as warnings (we don't follow them)
-    if (analysis.diagnostics.some(d => d.code === 'WARN_SYMLINKS_IGNORED')) {
-      // Already added in analyzeExtractedSource
-    }
 
     return {
       success: true,

@@ -92,6 +92,8 @@ export {
   safeReadFile,
   validateExtractionPath,
   isPathEscape,
+  validateArchiveUrl,
+  type ArchiveUrlValidation,
   type SourceAcquisitionResult,
 } from './acquisition.js';
 

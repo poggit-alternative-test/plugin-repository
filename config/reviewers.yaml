@@ -1,0 +1,19 @@
+# Reviewer Authorization Configuration
+#
+# M4 Requirement: Declarative reviewer authorization mechanism.
+# Uses stable GitHub numeric user ID as canonical identity.
+#
+# Format:
+# version: 1
+# authorizedReviewers:
+#   - githubId: 12345678
+#     login: reviewer-name
+#
+# NOTE: The numeric GitHub ID is canonical.
+#       Username changes don't affect authorization.
+#       This file should be in the trusted base branch.
+
+version: 1
+authorizedReviewers:
+  - githubId: 12345678
+    login: authorized-reviewer
