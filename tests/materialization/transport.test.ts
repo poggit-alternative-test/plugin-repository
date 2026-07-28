@@ -206,15 +206,27 @@ describe('M5: Tester Transport Configuration', () => {
 });
 
 describe('M5: Tester Config Environment Loading', () => {
-  const originalEnv = process.env;
+  const originalEnv = { ...process.env };
+
+  const TESTER_ENV_KEYS = [
+    "M5_TESTER_ENABLED",
+    "M5_TESTER_ALLOWED_ORGS",
+    "M5_TESTER_ALLOW_REPO_CREATION",
+    "M5_GITHUB_APP_ID",
+    "M5_RATE_LIMIT_MAX_RETRIES",
+  ] as const;
 
   beforeEach(() => {
     vi.resetModules();
     process.env = { ...originalEnv };
+
+    for (const key of TESTER_ENV_KEYS) {
+      delete process.env[key];
+    }
   });
 
   afterEach(() => {
-    process.env = originalEnv;
+    process.env = { ...originalEnv };
   });
 
   it('returns disabled config when M5_TESTER_ENABLED is not set', () => {

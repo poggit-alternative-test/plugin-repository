@@ -15,7 +15,7 @@
  * 8. Produce structured result
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'fs';
+import { existsSync, readFileSync, rmSync, statSync } from 'fs';
 import { join, extname } from 'path';
 import { tmpdir } from 'os';
 import type { GitHubClient } from './github.js';
@@ -283,10 +283,10 @@ export async function inspectSubmission(
     repositoryName: canonicalRepoIdentity?.name ?? name!,
   });
 
-  // Step 8: Acquire source at exact SHA
+  // Step 8: Acquire source at exact SHA (with authentication token for private repos)
   const tempDir = join(cfg.tempDir!, `axolotl-inspection-${Date.now()}`);
 
-  const acquisitionResult = await acquireSource(client, owner!, name!, resolvedSha, tempDir);
+  const acquisitionResult = await acquireSource(client, owner!, name!, resolvedSha, tempDir, false, cfg.githubToken);
   diagnostics.push(...acquisitionResult.diagnostics);
 
   if (!acquisitionResult.success || !acquisitionResult.sourcePath) {
@@ -319,31 +319,14 @@ export async function inspectSubmission(
 
   const sourcePath = acquisitionResult.sourcePath;
 
-  // Use real values from acquisition result
+  // Use values from acquisition result (fileList is already computed during extraction)
   const fileCount = acquisitionResult.fileCount ?? 0;
   const phpFileCount = acquisitionResult.phpFileCount ?? 0;
   const hasPluginYml = acquisitionResult.hasPluginYml ?? false;
   const hasComposerJson = acquisitionResult.hasComposerJson ?? false;
   const symlinkCount = acquisitionResult.symlinkCount ?? 0;
   const totalSizeBytes = acquisitionResult.totalSizeBytes ?? 0;
-
-  // Build file list from source analysis
-  const { readdirSync } = require('fs');
-  const { join: pathJoin } = require('path');
-  const fileList: string[] = [];
-  function collectFiles(dir: string): void {
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const fullPath = pathJoin(dir, entry.name);
-        if (entry.isDirectory()) {
-          collectFiles(fullPath);
-        } else {
-          fileList.push(fullPath.replace(sourcePath + pathJoin('.', ''), ''));
-        }
-      }
-    } catch {}
-  }
-  collectFiles(sourcePath);
+  const fileList = acquisitionResult.fileList ?? [];
 
   builder.setSource({
     sourceAcquired: true,

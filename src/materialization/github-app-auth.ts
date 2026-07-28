@@ -13,6 +13,7 @@
  */
 
 import { createHash, createSign } from 'crypto';
+import { readFileSync } from 'node:fs';
 import type { MaterializationErrorCode } from './materialization-types.js';
 
 // ============================================================
@@ -164,7 +165,6 @@ export class GitHubAppAuth {
 
     if (config.privateKeyPath) {
       try {
-        const { readFileSync } = require('fs');
         return readFileSync(config.privateKeyPath, 'utf-8');
       } catch (error) {
         throw new Error(`Failed to load GitHub App private key from ${config.privateKeyPath}: ${error instanceof Error ? error.message : 'unknown error'}`);
@@ -348,7 +348,6 @@ function loadPrivateKey(source: string | { env?: string; config?: string; defaul
     }
 
     if (envPath) {
-      const { readFileSync } = require('fs');
       return readFileSync(envPath, 'utf-8');
     }
 
@@ -356,7 +355,6 @@ function loadPrivateKey(source: string | { env?: string; config?: string; defaul
   }
 
   if (typeof source === 'string') {
-    const { readFileSync } = require('fs');
     return readFileSync(source, 'utf-8');
   }
 
@@ -368,12 +366,10 @@ function loadPrivateKey(source: string | { env?: string; config?: string; defaul
   }
 
   if (envPath) {
-    const { readFileSync } = require('fs');
     return readFileSync(envPath, 'utf-8');
   }
 
   if (source.default) {
-    const { readFileSync } = require('fs');
     return readFileSync(source.default, 'utf-8');
   }
 

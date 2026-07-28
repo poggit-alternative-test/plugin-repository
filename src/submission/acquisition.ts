@@ -15,14 +15,13 @@
  * - Fail closed on security violations
  */
 
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join, relative, resolve, sep } from 'path';
 import {
   SUBMISSION_CODES,
   submissionError,
   submissionWarning,
   type SubmissionDiagnostic,
-  DiagnosticSeverity,
 } from './diagnostics.js';
 import type { GitHubClient } from './github.js';
 
@@ -53,6 +52,8 @@ export interface SourceAcquisitionResult {
   hasPluginYml?: boolean;
   hasComposerJson?: boolean;
   symlinkCount?: number;
+  /** List of relative file paths extracted from source */
+  fileList?: string[];
   diagnostics: SubmissionDiagnostic[];
 }
 
@@ -236,19 +237,105 @@ function isLocalhost(hostname: string): boolean {
 // Bounded Download with Redirect Validation
 // ============================================================
 
-const MAX_REDIRECT_COUNT = 5;
+/**
+ * Validate redirect URL against archive URL policy.
+ * SECURITY: Every redirect destination is validated to prevent SSRF attacks.
+ */
+function validateRedirect(
+  location: string | null,
+  currentUrl: string,
+  redirectChain: string[],
+  allowLocalhost: boolean
+): { valid: boolean; error?: string; redirectUrl?: string } {
+  if (!location) {
+    return { valid: false, error: 'Redirect response with no Location header' };
+  }
+
+  // Check redirect count limit
+  if (redirectChain.length > MAX_REDIRECT_LIMIT) {
+    return { valid: false, error: `Too many redirects (${redirectChain.length}), maximum allowed: ${MAX_REDIRECT_LIMIT}` };
+  }
+
+  // Resolve relative redirect URLs
+  let redirectUrl: string;
+  try {
+    redirectUrl = new URL(location, currentUrl).toString();
+  } catch {
+    return { valid: false, error: `Malformed redirect URL: ${location}` };
+  }
+
+  // Validate redirect destination against archive URL policy
+  const validation = validateArchiveUrl(redirectUrl, allowLocalhost);
+  if (!validation.valid) {
+    return { valid: false, error: `Redirect to unsafe destination rejected: ${validation.error}` };
+  }
+
+  return { valid: true, redirectUrl };
+}
+
+/**
+ * Validate that downloaded content is a valid ZIP archive.
+ */
+function validateZipArchive(bodyBytes: Uint8Array): { valid: boolean; error?: string } {
+  const ZIP_SIGNATURES = [
+    { name: 'local file header', bytes: [0x50, 0x4B, 0x03, 0x04] },
+    { name: 'empty archive', bytes: [0x50, 0x4B, 0x05, 0x06] },
+    { name: 'spanned archive', bytes: [0x50, 0x4B, 0x07, 0x08] },
+  ];
+
+  for (const sig of ZIP_SIGNATURES) {
+    if (sig.bytes.every((b, i) => bodyBytes[i] === b)) {
+      return { valid: true };
+    }
+  }
+
+  const hexPreview = Array.from(bodyBytes.slice(0, 4))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join(' ');
+  return { valid: false, error: `Not a valid ZIP file (first 4 bytes: ${hexPreview})` };
+}
+
+/**
+ * Write downloaded content to file and verify it was written correctly.
+ */
+function writeDownloadedContent(
+  destinationPath: string,
+  bodyBytes: Uint8Array
+): { success: boolean; error?: string } {
+  try {
+    writeFileSync(destinationPath, Buffer.from(bodyBytes));
+
+    // Verify file was written correctly
+    const stats = statSync(destinationPath);
+    if (stats.size !== bodyBytes.length) {
+      return { success: false, error: `File size mismatch: expected ${bodyBytes.length}, got ${stats.size}` };
+    }
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Failed to write file' };
+  }
+}
+
+const MAX_REDIRECT_LIMIT = 5;
 
 /**
  * Download a file with bounded size checks and redirect validation.
- *
  * SECURITY: Every redirect destination is validated against the archive URL policy
  * before being followed. This prevents SSRF via redirect attacks.
+ *
+ * @param url - The URL to download
+ * @param destinationPath - Where to save the file
+ * @param timeout - Download timeout in ms
+ * @param allowLocalhost - Allow localhost URLs (testing only)
+ * @param token - Optional GitHub token for authenticated downloads
  */
 async function boundedDownload(
   url: string,
   destinationPath: string,
   timeout: number = LIMITS.ARCHIVE_DOWNLOAD_TIMEOUT,
-  allowLocalhost: boolean = false
+  allowLocalhost: boolean = false,
+  token?: string
 ): Promise<{ success: boolean; bytesRead: number; error?: string }> {
   // Validate URL first
   const urlValidation = validateArchiveUrl(url, allowLocalhost);
@@ -256,10 +343,12 @@ async function boundedDownload(
     return { success: false, bytesRead: 0, error: `Unsafe archive URL: ${urlValidation.error}` };
   }
 
+  // Track redirect chain
+  const redirectChain: string[] = [url];
+
   return new Promise((resolve) => {
     let bytesRead = 0;
     let aborted = false;
-    let redirectCount = 0;
     let settled = false;
 
     const settle = (result: { success: boolean; bytesRead: number; error?: string }) => {
@@ -275,68 +364,42 @@ async function boundedDownload(
       controller.abort();
     }, timeout);
 
-    async function fetchWithRedirectValidation(currentUrl: string): Promise<void> {
+    async function fetchWithRedirectValidation(currentUrl: string, currentToken?: string): Promise<void> {
       try {
+        // Build headers for the request
+        const headers: Record<string, string> = {
+          Accept: 'application/vnd.github.v3+json',
+        };
+
+        if (currentToken) {
+          headers.Authorization = `Bearer ${currentToken}`;
+        }
+
         // Use manual redirect handling to validate each destination
         const response = await fetch(currentUrl, {
           signal: controller.signal,
           redirect: 'manual',
+          headers,
         });
+
+        // Track redirect chain
+        if (response.url !== currentUrl) {
+          redirectChain.push(response.url);
+        }
 
         // Handle redirects manually with validation
         if (response.status === 301 || response.status === 302 || response.status === 303 || response.status === 307 || response.status === 308) {
-          // Check redirect count limit
-          redirectCount++;
-          if (redirectCount > MAX_REDIRECT_COUNT) {
-            clearTimeout(timeoutId);
-            settle({
-              success: false,
-              bytesRead,
-              error: `Too many redirects (${redirectCount}), maximum allowed: ${MAX_REDIRECT_COUNT}`,
-            });
-            return;
-          }
-
-          // Get redirect location from Location header
           const location = response.headers.get('location');
-          if (!location) {
-            clearTimeout(timeoutId);
-            settle({
-              success: false,
-              bytesRead,
-              error: `Redirect response with no Location header`,
-            });
-            return;
-          }
+          const redirectValidation = validateRedirect(location, currentUrl, redirectChain, allowLocalhost);
 
-          // Resolve relative redirect URLs
-          let redirectUrl: string;
-          try {
-            redirectUrl = new URL(location, currentUrl).toString();
-          } catch {
-            clearTimeout(timeoutId);
-            settle({
-              success: false,
-              bytesRead,
-              error: `Malformed redirect URL: ${location}`,
-            });
-            return;
-          }
-
-          // Validate redirect destination against archive URL policy
-          const redirectValidation = validateArchiveUrl(redirectUrl, allowLocalhost);
           if (!redirectValidation.valid) {
             clearTimeout(timeoutId);
-            settle({
-              success: false,
-              bytesRead,
-              error: `Redirect to unsafe destination rejected: ${redirectValidation.error}`,
-            });
+            settle({ success: false, bytesRead, error: redirectValidation.error });
             return;
           }
 
-          // Follow the validated redirect
-          await fetchWithRedirectValidation(redirectUrl);
+          // Follow the validated redirect (preserve token for authenticated requests)
+          await fetchWithRedirectValidation(redirectValidation.redirectUrl!, currentToken);
           return;
         }
 
@@ -347,79 +410,33 @@ async function boundedDownload(
           return;
         }
 
-        const contentLength = response.headers.get('content-length');
-        const archiveSize = contentLength ? parseInt(contentLength, 10) : 0;
+        // Read response body
+        const bodyBuffer = await response.arrayBuffer();
+        const bodyBytes = new Uint8Array(bodyBuffer);
+        bytesRead = bodyBytes.length;
 
-        // Early check if content-length exceeds limit
-        if (archiveSize > LIMITS.MAX_ARCHIVE_SIZE) {
+        // Validate ZIP signature
+        const zipValidation = validateZipArchive(bodyBytes);
+        if (!zipValidation.valid) {
           clearTimeout(timeoutId);
-          settle({
-            success: false,
-            bytesRead,
-            error: `Archive size ${archiveSize} exceeds limit ${LIMITS.MAX_ARCHIVE_SIZE}`,
-          });
+          settle({ success: false, bytesRead, error: zipValidation.error });
           return;
         }
 
-        const writeStream = createWriteStream(destinationPath);
-
-        // Use response body as an async iterable
-        const reader = response.body!.getReader();
-
-        async function pump(): Promise<void> {
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-
-              if (done) {
-                clearTimeout(timeoutId);
-                writeStream.end();
-                settle({ success: true, bytesRead });
-                return;
-              }
-
-              bytesRead += value.length;
-
-              // Check during streaming
-              if (bytesRead > LIMITS.MAX_ARCHIVE_SIZE) {
-                clearTimeout(timeoutId);
-                writeStream.close();
-                // Clean up partial file on size limit
-                try {
-                  rmSync(destinationPath, { force: true });
-                } catch {}
-                settle({
-                  success: false,
-                  bytesRead,
-                  error: `Download exceeded size limit: ${bytesRead} bytes`,
-                });
-                return;
-              }
-
-              writeStream.write(value);
-            }
-          } catch (e) {
-            clearTimeout(timeoutId);
-            if (!aborted) {
-              writeStream.close();
-              // Clean up partial file on error
-              try {
-                rmSync(destinationPath, { force: true });
-              } catch {}
-              settle({ success: false, bytesRead, error: e instanceof Error ? e.message : 'Download failed' });
-            }
-          }
+        // Write to file
+        const writeResult = writeDownloadedContent(destinationPath, bodyBytes);
+        if (!writeResult.success) {
+          clearTimeout(timeoutId);
+          settle({ success: false, bytesRead, error: writeResult.error });
+          return;
         }
 
-        pump();
+        clearTimeout(timeoutId);
+        settle({ success: true, bytesRead });
       } catch (e) {
         clearTimeout(timeoutId);
         if (e instanceof Error) {
           if (e.name === 'AbortError') {
-            // Clean up partial file on abort
-            try {
-              rmSync(destinationPath, { force: true });
-            } catch {}
             settle({
               success: false,
               bytesRead,
@@ -428,10 +445,6 @@ async function boundedDownload(
                 : `Download timed out after ${timeout}ms`,
             });
           } else {
-            // Clean up partial file on error
-            try {
-              rmSync(destinationPath, { force: true });
-            } catch {}
             settle({ success: false, bytesRead, error: e.message });
           }
         } else {
@@ -441,7 +454,7 @@ async function boundedDownload(
     }
 
     // Start the fetch with redirect validation
-    fetchWithRedirectValidation(url).catch((e) => {
+    fetchWithRedirectValidation(url, token).catch((e) => {
       settle({ success: false, bytesRead, error: e instanceof Error ? e.message : 'Download failed' });
     });
   });
@@ -673,6 +686,7 @@ async function extractArchive(
  * @param sha Exact commit SHA
  * @param tempDir Temporary directory for extraction
  * @param allowLocalhost For testing only - allows localhost URLs
+ * @param token Optional GitHub token for authenticated downloads
  * @returns Acquisition result with file list
  */
 export async function acquireSource(
@@ -681,7 +695,8 @@ export async function acquireSource(
   repo: string,
   sha: string,
   tempDir: string,
-  allowLocalhost: boolean = false
+  allowLocalhost: boolean = false,
+  token?: string
 ): Promise<SourceAcquisitionResult> {
   const diagnostics: SubmissionDiagnostic[] = [];
 
@@ -726,9 +741,9 @@ export async function acquireSource(
       return { success: false, diagnostics };
     }
 
-    // Download with bounded size
+    // Download with bounded size (include token for authenticated requests)
     archivePath = join(extractDir, 'archive.zip');
-    const downloadResult = await boundedDownload(archiveUrl, archivePath, LIMITS.ARCHIVE_DOWNLOAD_TIMEOUT, allowLocalhost);
+    const downloadResult = await boundedDownload(archiveUrl, archivePath, LIMITS.ARCHIVE_DOWNLOAD_TIMEOUT, allowLocalhost, token);
 
     if (!downloadResult.success) {
       if (downloadResult.error?.includes('size limit')) {
@@ -800,6 +815,7 @@ export async function acquireSource(
       hasPluginYml: analysis.hasPluginYml || false,
       hasComposerJson: analysis.hasComposerJson || false,
       symlinkCount: analysis.symlinkCount || 0,
+      fileList: analysis.fileList || [],
       diagnostics,
     };
   } catch (e) {
