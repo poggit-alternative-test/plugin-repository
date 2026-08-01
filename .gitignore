@@ -13,7 +13,7 @@ yarn.lock
 
 .astro/
 dist/
-build/
+/build/
 out/
 public/assets/
 

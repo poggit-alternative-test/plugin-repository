@@ -10,11 +10,13 @@
   "scripts": {
     "validate": "npm run validate --workspace=tools/validator",
     "build": "echo \"No build step at M3 - code runs via tsx\"",
+    "build:tools": "npm run typecheck --workspace=tools/builder",
     "generate": "echo \"registry-generator not yet implemented\"",
     "registry:validate": "tsx src/cli/validate-registry.ts",
     "submission:inspect": "tsx src/cli/inspect-submission.ts",
     "review": "tsx src/cli/review.ts",
     "materialize": "tsx src/cli/materialize.ts",
+    "build:spike": "tsx src/cli/build-spike.ts",
     "test": "vitest run",
     "test:registry": "vitest run tests/registry",
     "test:submission": "vitest run tests/submission",
