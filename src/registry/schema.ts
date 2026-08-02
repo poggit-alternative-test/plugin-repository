@@ -121,6 +121,20 @@ const VersionStorageRefSchema = z.object({
 });
 
 /**
+ * Provenance reference schema
+ *
+ * Vendor-neutral provenance mechanism indicator.
+ * Supports multiple providers without schema redesign.
+ */
+const ProvenanceRefSchema = z.object({
+  type: z.enum(['github-attestation'], {
+    errorMap: () => ({
+      message: 'Provenance type must be a supported value (e.g., github-attestation)',
+    }),
+  }),
+});
+
+/**
  * Artifact reference schema
  */
 const ArtifactRefSchema = z.object({
@@ -128,6 +142,8 @@ const ArtifactRefSchema = z.object({
   file: z.string().min(1, 'PHAR filename is required'),
   sha256: z.string().regex(SHA256_REGEX, 'Must be a valid 64-character SHA-256'),
   published_at: z.string().min(1, 'Publication timestamp is required'),
+  // Vendor-neutral provenance mechanism indicator
+  provenance: ProvenanceRefSchema.optional(),
 });
 
 /**

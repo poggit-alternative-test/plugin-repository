@@ -24,6 +24,7 @@
 14. [Workflow Permissions](#workflow-permissions)
 15. [Technology Choices](#technology-choices)
 16. [Unresolved Decisions](#unresolved-decisions)
+17. [Documentation Index](#documentation-index)
 
 ---
 
@@ -938,41 +939,79 @@ Artifact attestations provide cryptographic provenance:
 - Workflow run
 - Artifact digest
 
+### Implementation
+
+GitHub Artifact Attestations are generated using the official `actions/attest-build-provenance@v1` action.
+
+**Important Architecture Decisions**:
+
+1. **Attestation belongs to Infrastructure, not Build domain**
+   - Build produces artifacts; Infrastructure provides provenance
+   - Build remains platform-independent
+   - Attestations are GitHub-specific
+
+2. **GitHub is the authoritative provenance provider**
+   - GitHub generates and stores attestations
+   - Registry does NOT duplicate provenance data
+   - Registry stores only minimal metadata indicating attestation exists
+
+3. **Registry stores minimal metadata only**
+   - `github_attestation: true/false` in artifact section
+   - Full attestation blob NOT stored in registry
+   - Website can display trust indicator without storing provenance
+
 ### GitHub Artifact Attestations
 
-If supported by GitHub:
-
 ```yaml
-- name: Create attestation
+# In build-trusted.yml workflow
+- name: Generate GitHub Artifact Attestation
   uses: actions/attest-build-provenance@v1
   with:
     subject-path: '{plugin}.phar'
-    provenance-path: provenance.json
 ```
+
+Attestations are generated **only** for push events, not manual workflow dispatch.
 
 ### Attestation Contents
 
+The attestation proves:
+
 ```json
 {
-  "schema_version": 1,
-  "type": "artifact-attestation",
   "source": {
     "repository": "nicholass003/TopStats",
     "commit": "b93f1e987654321..."
   },
-  "storage": {
-    "repository": "axolotl-pm-pl/TopStats",
-    "commit": "b93f1e987654321..."
-  },
   "build": {
     "repository": "axolotl-pm/axolotl-plugin-repository",
-    "workflow": "build-trusted.yml",
-    "run_id": "1234567890"
+    "workflow": "build-trusted.yml"
   },
   "artifact": {
     "digest": "sha256:a1b2c3d4..."
   }
 }
+```
+
+### Registry Minimal Metadata
+
+```yaml
+artifact:
+  release_tag: v2.1.0
+  file: TopStats.phar
+  sha256: a1b2c3d4e5f6...
+  published_at: 2026-08-05T10:00:00Z
+  provenance:
+    type: github-attestation  # Vendor-neutral mechanism indicator
+```
+
+The `provenance.type` field indicates the provenance mechanism. Future values may include `gitlab-attestation`, `self-attestation`, or `reproducible-build`.
+
+### Attestation Verification
+
+```bash
+# Verify attestation exists for a release
+gh attestation verify path/to/TopStats.phar \
+  --repo axolotl-pm-pl/TopStats
 ```
 
 ### Attestation Limitations
@@ -987,6 +1026,8 @@ If supported by GitHub:
 - That the plugin is benign
 - Absence of vulnerabilities
 - Absence of malicious code
+
+For detailed architecture documentation, see [ATTESTATION.md](./ATTESTATION.md).
 
 ---
 
@@ -1327,6 +1368,23 @@ immutable release (cannot be replaced)
 **Question**: How to efficiently generate website data from declarative registry?
 
 **Status**: Pipeline approach with caching.
+
+---
+
+## Documentation Index
+
+| Document | Purpose |
+|----------|---------|
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and design decisions |
+| [ATTESTATION.md](./ATTESTATION.md) | GitHub Artifact Attestations integration |
+| [SECURITY.md](./SECURITY.md) | Security model and trust boundaries |
+| [REGISTRY.md](./REGISTRY.md) | Registry format specification |
+| [REVIEW_POLICY.md](./REVIEW_POLICY.md) | Human review requirements |
+| [SUBMISSION.md](./SUBMISSION.md) | Plugin submission process |
+| [SUBMISSION_CI.md](./SUBMISSION_CI.md) | Submission validation CI workflow |
+| [M5_HANDOFF.md](./M5_HANDOFF.md) | M5 materialization handoff |
+| [M5_TRUST_MODEL.md](./M5_TRUST_MODEL.md) | M5 trust model details |
+| [M5_E2E_PROCEDURE.md](./M5_E2E_PROCEDURE.md) | End-to-end materialization procedure |
 
 ---
 

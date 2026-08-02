@@ -124,6 +124,19 @@
           "type": "string",
           "format": "date-time",
           "description": "Publication timestamp"
+        },
+        "provenance": {
+          "type": "object",
+          "description": "Vendor-neutral provenance mechanism indicator. The actual provenance document is stored by the provider (e.g., GitHub), not duplicated in the registry.",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["github-attestation"],
+              "description": "Provenance mechanism type. Currently supports github-attestation."
+            }
+          },
+          "required": ["type"]
         }
       }
     },

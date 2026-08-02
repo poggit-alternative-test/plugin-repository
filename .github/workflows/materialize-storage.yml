@@ -1,0 +1,451 @@
+name: Materialize Storage
+
+# ============================================================
+# MATERIALIZATION WORKFLOW (M5)
+#
+# This workflow materializes approved plugin source into axolotl-pm-pl.
+# It is triggered after M4 (Human Review) approves a candidate.
+#
+# TRUST MODEL:
+# - Runs after human approval (M4)
+# - Uses FileM4ApprovalStore to read M4 approval records
+# - Only materializes candidates with APPROVED state
+# - Uses GitHub App authentication with minimal permissions
+# - Source is always fetched from the EXACT approved SHA
+#
+# INTEGRATION:
+# - Triggered by workflow_dispatch for manual runs
+# - Designed to be triggered by GitHub API after M4 approval
+# ============================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_slug:
+        description: 'Plugin identifier (e.g., topstats)'
+        required: true
+        type: string
+      version:
+        description: 'Plugin version (e.g., 1.0.0)'
+        required: true
+        type: string
+      upstream_repository:
+        description: 'Upstream repository (e.g., nicholass003/TopStats)'
+        required: true
+        type: string
+      upstream_sha:
+        description: 'Exact 40-character commit SHA'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run mode (no actual writes)'
+        required: false
+        type: boolean
+        default: true
+
+  # Future: Trigger after M4 approval is recorded
+  # This requires GitHub API integration to detect new approval decisions
+  # repository_dispatch:
+  #   types: [materialization-requested]
+
+# Security: Explicit minimal permissions
+# This workflow needs write access to axolotl-pm-pl for repository creation
+permissions:
+  contents: write        # Read registry, write storage repositories
+  actions: read          # Read workflow state
+  # No secrets beyond GITHUB_TOKEN for GitHub App auth
+
+# Concurrency: One materialization per plugin at a time
+concurrency:
+  group: materialize-${{ inputs.plugin_slug }}
+  cancel-in-progress: false  # Don't cancel; let it complete
+
+env:
+  ACTIONS_ALLOW_UNSECURE_COMMANDS: false
+
+jobs:
+  # ============================================================
+  # Job 1: Validate Inputs
+  # ============================================================
+  validate-inputs:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      plugin_slug: ${{ steps.validate.outputs.plugin_slug }}
+      version: ${{ steps.validate.outputs.version }}
+      upstream_repository: ${{ steps.validate.outputs.upstream_repository }}
+      upstream_sha: ${{ steps.validate.outputs.upstream_sha }}
+      dry_run: ${{ steps.validate.outputs.dry_run }}
+    steps:
+      - name: Validate plugin slug
+        id: validate
+        run: |
+          PLUGIN_SLUG="${{ inputs.plugin_slug }}"
+          VERSION="${{ inputs.version }}"
+          REPO="${{ inputs.upstream_repository }}"
+          SHA="${{ inputs.upstream_sha }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          # Validate plugin slug format (lowercase, alphanumeric, hyphens)
+          if ! echo "$PLUGIN_SLUG" | grep -qE '^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$'; then
+            echo "ERROR: Invalid plugin slug format: $PLUGIN_SLUG"
+            echo "Must match: ^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$"
+            exit 1
+          fi
+
+          # Validate version format (SemVer)
+          if ! echo "$VERSION" | grep -qE '^\d+\.\d+\.\d+(-[a-z0-9.]+)?(\+[a-z0-9.]+)?$'; then
+            echo "ERROR: Invalid version format: $VERSION"
+            echo "Must be a valid SemVer (e.g., 1.0.0, 2.1.0-beta)"
+            exit 1
+          fi
+
+          # Validate repository format (owner/name)
+          if ! echo "$REPO" | grep -qE '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$'; then
+            echo "ERROR: Invalid repository format: $REPO"
+            echo "Must be owner/name format"
+            exit 1
+          fi
+
+          # Validate SHA format (40 hex characters)
+          if ! echo "$SHA" | grep -qE '^[a-f0-9]{40}$'; then
+            echo "ERROR: Invalid SHA format: $SHA"
+            echo "Must be exactly 40 hexadecimal characters"
+            exit 1
+          fi
+
+          # Default dry_run to true if not specified
+          if [ -z "$DRY_RUN" ]; then
+            DRY_RUN="true"
+          fi
+
+          echo "Validation passed:"
+          echo "  Plugin: $PLUGIN_SLUG"
+          echo "  Version: $VERSION"
+          echo "  Repository: $REPO"
+          echo "  SHA: $SHA"
+          echo "  Dry Run: $DRY_RUN"
+
+          echo "plugin_slug=$PLUGIN_SLUG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "upstream_repository=$REPO" >> $GITHUB_OUTPUT
+          echo "upstream_sha=$SHA" >> $GITHUB_OUTPUT
+          echo "dry_run=$DRY_RUN" >> $GITHUB_OUTPUT
+
+  # ============================================================
+  # Job 2: Verify M4 Approval
+  # ============================================================
+  verify-approval:
+    name: Verify M4 Approval
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    outputs:
+      approved: ${{ steps.check.outputs.approved }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check for M4 approval record
+        id: check
+        run: |
+          PLUGIN_SLUG="${{ needs.validate-inputs.outputs.plugin_slug }}"
+          UPSTREAM_REPO="${{ needs.validate-inputs.outputs.upstream_repository }}"
+          SHA="${{ needs.validate-inputs.outputs.upstream_sha }}"
+
+          # Construct expected M4 candidate identity
+          # Format: slug@owner/repo#sha
+          CANDIDATE_ID="${PLUGIN_SLUG}@${UPSTREAM_REPO}#${SHA}"
+
+          # Calculate short ID (first 8 chars of SHA-256 of candidate identity)
+          SHORT_ID=$(echo -n "$CANDIDATE_ID" | sha256sum | cut -d' ' -f1 | cut -c1-8)
+
+          # Check for M4 review records
+          CANDIDATE_PATH="reviews/${PLUGIN_SLUG}/${SHORT_ID}/candidate.yaml"
+          DECISIONS_DIR="reviews/${PLUGIN_SLUG}/${SHORT_ID}/decisions"
+
+          echo "Looking for M4 approval record:"
+          echo "  Candidate: $CANDIDATE_ID"
+          echo "  Short ID: $SHORT_ID"
+          echo "  Candidate file: $CANDIDATE_PATH"
+          echo "  Decisions dir: $DECISIONS_DIR"
+
+          if [ ! -f "$CANDIDATE_PATH" ]; then
+            echo "::error::M4 candidate record not found: $CANDIDATE_PATH"
+            echo "::error::Candidate must be registered in M4 before materialization."
+            echo "approved=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          if [ ! -d "$DECISIONS_DIR" ]; then
+            echo "::error::M4 decisions directory not found: $DECISIONS_DIR"
+            echo "approved=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Check for APPROVED decision
+          APPROVED_DECISION=$(grep -l "^decision: APPROVED$" "$DECISIONS_DIR"/*.yaml 2>/dev/null | head -1)
+          if [ -z "$APPROVED_DECISION" ]; then
+            echo "::error::No APPROVED decision found for candidate"
+            echo "Available decisions:"
+            ls -la "$DECISIONS_DIR/"
+            echo "approved=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          echo "M4 approval verified:"
+          echo "  Approved by: $(grep "^reviewer:" "$APPROVED_DECISION" | head -1)"
+          echo "  At: $(grep "^timestamp:" "$APPROVED_DECISION" | head -1)"
+          echo "approved=true" >> $GITHUB_OUTPUT
+
+  # ============================================================
+  # Job 3: Generate Materialization Plan
+  # ============================================================
+  generate-plan:
+    name: Generate Plan
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, verify-approval]
+    if: needs.verify-approval.outputs.approved == 'true'
+    outputs:
+      plan_json: ${{ steps.plan.outputs.plan_json }}
+      materialization_id: ${{ steps.plan.outputs.materialization_id }}
+      storage_repository: ${{ steps.plan.outputs.storage_repository }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate materialization plan
+        id: plan
+        env:
+          MAT_M4_REVIEWS_DIR: ${{ github.workspace }}/reviews
+          MAT_STORAGE_OWNER: axolotl-pm-pl
+          MAT_REVIEWERS_CONFIG: ${{ github.workspace }}/config/reviewers.yaml
+          M5_TESTER_ENABLED: 'false'
+        run: |
+          PLUGIN_SLUG="${{ needs.validate-inputs.outputs.plugin_slug }}"
+          VERSION="${{ needs.validate-inputs.outputs.version }}"
+          REPO="${{ needs.validate-inputs.outputs.upstream_repository }}"
+          SHA="${{ needs.validate-inputs.outputs.upstream_sha }}"
+          DRY_RUN="${{ needs.validate-inputs.outputs.dry_run }}"
+
+          echo "=== Materialization Plan Generation ==="
+          echo "Plugin: $PLUGIN_SLUG"
+          echo "Version: $VERSION"
+          echo "Repository: $REPO"
+          echo "SHA: $SHA"
+          echo "Dry Run: $DRY_RUN"
+
+          # Run the materialize CLI to generate plan
+          PLAN_JSON=$(npm run materialize -- plan \
+            --plugin-slug "$PLUGIN_SLUG" \
+            --repository "$REPO" \
+            --sha "$SHA" \
+            --version "$VERSION" 2>&1)
+
+          if [ $? -ne 0 ]; then
+            echo "Plan generation failed:"
+            echo "$PLAN_JSON"
+            exit 1
+          fi
+
+          echo "Plan generated successfully"
+          echo "$PLAN_JSON" | jq '.'
+
+          # Extract key outputs
+          MATERIALIZATION_ID=$(echo "$PLAN_JSON" | jq -r '.materializationId')
+          STORAGE_REPO=$(echo "$PLAN_JSON" | jq -r '.storageRepository')
+
+          echo "materialization_id=$MATERIALIZATION_ID" >> $GITHUB_OUTPUT
+          echo "storage_repository=$STORAGE_REPO" >> $GITHUB_OUTPUT
+          echo "plan_json<<EOF" >> $GITHUB_OUTPUT
+          echo "$PLAN_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: materialization-plan-${{ needs.validate-inputs.outputs.plugin_slug }}-${{ needs.validate-inputs.outputs.version }}
+          path: ${{ github.workspace }}/plan.json
+          retention-days: 30
+
+  # ============================================================
+  # Job 4: Dry-Run Verification
+  # ============================================================
+  dry-run-check:
+    name: Dry Run Check
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, verify-approval, generate-plan]
+    if: needs.validate-inputs.outputs.dry_run == 'true'
+    steps:
+      - name: Report dry run mode
+        run: |
+          echo "=== DRY RUN MODE ==="
+          echo ""
+          echo "This materialization will NOT make any changes."
+          echo "To execute the materialization, re-run with dry_run=false."
+          echo ""
+          echo "Materialization Plan:"
+          echo "${{ needs.generate-plan.outputs.plan_json }}" | jq '.'
+
+          echo "storage_repository=${{ needs.generate-plan.outputs.storage_repository }}" >> $GITHUB_OUTPUT
+
+  # ============================================================
+  # Job 5: Execute Materialization
+  # ============================================================
+  execute-materialization:
+    name: Execute Materialization
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, verify-approval, generate-plan]
+    if: |
+      needs.validate-inputs.outputs.dry_run == 'false' &&
+      needs.verify-approval.outputs.approved == 'true'
+    environment:
+      name: materialization
+      url: https://github.com/${{ needs.generate-plan.outputs.storage_repository }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Execute materialization
+        id: execute
+        env:
+          # M4 configuration
+          MAT_M4_REVIEWS_DIR: ${{ github.workspace }}/reviews
+          MAT_STORAGE_OWNER: axolotl-pm-pl
+          MAT_REVIEWERS_CONFIG: ${{ github.workspace }}/config/reviewers.yaml
+          MAT_STORAGE_BRANCH: main
+
+          # Tester mode - restricts to allowed orgs only
+          # NOTE: In production, use GitHub App with proper org restrictions
+          M5_TESTER_ENABLED: 'true'
+          M5_TESTER_ALLOWED_ORGS: 'axolotl-pm-pl'
+          M5_TESTER_ALLOW_REPO_CREATION: 'true'
+
+          # GitHub App authentication
+          # These should be set as repository secrets in production
+          M5_GITHUB_APP_ID: ${{ secrets.M5_GITHUB_APP_ID }}
+          M5_GITHUB_APP_PRIVATE_KEY: ${{ secrets.M5_GITHUB_APP_PRIVATE_KEY }}
+          M5_GITHUB_APP_INSTALLATION_ID_BY_ORG: ${{ secrets.M5_GITHUB_APP_INSTALLATION_ID_BY_ORG }}
+        run: |
+          PLUGIN_SLUG="${{ needs.validate-inputs.outputs.plugin_slug }}"
+          VERSION="${{ needs.validate-inputs.outputs.version }}"
+          REPO="${{ needs.validate-inputs.outputs.upstream_repository }}"
+          SHA="${{ needs.validate-inputs.outputs.upstream_sha }}"
+
+          echo "=== Materialization Execution ==="
+          echo "Plugin: $PLUGIN_SLUG"
+          echo "Version: $VERSION"
+          echo "Repository: $REPO"
+          echo "SHA: $SHA"
+          echo ""
+          echo "This will create/update:"
+          echo "  Storage: axolotl-pm-pl/${PLUGIN_SLUG}"
+          echo ""
+
+          # Run the materialize CLI to execute
+          RESULT_JSON=$(npm run materialize -- execute \
+            --plugin-slug "$PLUGIN_SLUG" \
+            --repository "$REPO" \
+            --sha "$SHA" \
+            --version "$VERSION" 2>&1)
+
+          EXIT_CODE=$?
+
+          echo "Materialization result:"
+          echo "$RESULT_JSON" | jq '.'
+
+          echo "result_json<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULT_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::Materialization failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+
+          # Check for failures in the result
+          SUCCESS=$(echo "$RESULT_JSON" | jq -r '.success')
+          if [ "$SUCCESS" != "true" ]; then
+            echo "::error::Materialization reported failure"
+            exit 1
+          fi
+
+          ALREADY=$(echo "$RESULT_JSON" | jq -r '.alreadyMaterialized')
+          if [ "$ALREADY" == "true" ]; then
+            echo "::notice::Repository already materialized for this exact source"
+          fi
+
+          echo "Materialization completed successfully"
+
+      - name: Upload execution result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: materialization-result-${{ needs.validate-inputs.outputs.plugin_slug }}-${{ needs.validate-inputs.outputs.version }}
+          path: ${{ github.workspace }}/result.json
+          retention-days: 30
+
+  # ============================================================
+  # Job 6: Materialization Summary
+  # ============================================================
+  materialize-summary:
+    name: Materialization Summary
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, verify-approval, generate-plan]
+    if: always()
+    steps:
+      - name: Download plan artifact
+        if: needs.generate-plan.outputs.plan_json
+        uses: actions/download-artifact@v4
+        with:
+          name: materialization-plan-${{ needs.validate-inputs.outputs.plugin_slug }}-${{ needs.validate-inputs.outputs.version }}
+          path: artifacts
+
+      - name: Report summary
+        run: |
+          echo "============================================"
+          echo "Materialization Summary"
+          echo "============================================"
+          echo ""
+          echo "Plugin: ${{ needs.validate-inputs.outputs.plugin_slug }}"
+          echo "Version: ${{ needs.validate-inputs.outputs.version }}"
+          echo "Repository: ${{ needs.validate-inputs.outputs.upstream_repository }}"
+          echo "SHA: ${{ needs.validate-inputs.outputs.upstream_sha }}"
+          echo ""
+          echo "Dry Run: ${{ needs.validate-inputs.outputs.dry_run }}"
+          echo "M4 Approved: ${{ needs.verify-approval.outputs.approved }}"
+          echo ""
+
+          if [ '${{ needs.validate-inputs.outputs.dry_run }}' == 'true' ]; then
+            echo "STATUS: Dry run completed"
+            echo ""
+            echo "To execute, re-run with dry_run=false"
+          elif [ '${{ needs.verify-approval.outputs.approved }}' != 'true' ]; then
+            echo "STATUS: Blocked - M4 approval not found"
+          else
+            echo "STATUS: Materialization completed"
+          fi
+          echo ""
+          echo "============================================"

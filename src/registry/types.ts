@@ -84,7 +84,32 @@ export interface ArtifactRef {
   file: string;
   sha256: Sha256;
   publishedAt: string; // ISO 8601
+  // Vendor-neutral provenance mechanism indicator
+  // GitHub stores the full attestation; Registry only indicates the mechanism
+  provenance?: ProvenanceRef;
 }
+
+/**
+ * Provenance reference schema
+ *
+ * Indicates the provenance mechanism used for this artifact.
+ * The actual provenance document is stored by the provider (e.g., GitHub),
+ * not duplicated in the Registry.
+ */
+export interface ProvenanceRef {
+  type: ProvenanceType;
+}
+
+/**
+ * Supported provenance mechanism types
+ *
+ * Design allows adding new types without schema redesign:
+ * - github-attestation: GitHub Artifact Attestations
+ * - gitlab-attestation: GitLab attestations (future)
+ * - self-attestation: Manual attestation (future)
+ * - reproducible-build: Reproducible build verification (future)
+ */
+export type ProvenanceType = 'github-attestation';
 
 // ============================================================
 // Version Lifecycle States

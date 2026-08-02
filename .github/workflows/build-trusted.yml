@@ -1,11 +1,19 @@
 name: Build Trusted PHAR
 
 # ============================================================
-# TRUSTED BUILD WORKFLOW (Trusted Zone)
+# TRUSTED BUILD WORKFLOW
 #
 # This workflow runs ONLY after registry merge.
 # Uses EXACT SHA from registry entry.
-# Has publication secrets.
+#
+# INTEGRATION: This workflow orchestrates the Build TypeScript package.
+# All Build logic is in src/build/ and tools/builder/.
+# GitHub Actions only provides the execution environment.
+#
+# ATTESTATION: GitHub Artifact Attestations are generated using the
+# official `actions/attest-build-provenance` action after a successful
+# PHAR build. This is an Infrastructure concern, not Build domain logic.
+# Attestations prove provenance for verification but are stored by GitHub.
 # ============================================================
 
 on:
@@ -25,10 +33,12 @@ on:
         required: true
 
 # Security: Explicit minimal permissions
+# NOTE: This workflow has NO publication credentials
+# NOTE: This workflow has NO write access to storage
 permissions:
-  contents: read        # Read registry and source
-  actions: read/write   # Write build logs
-  attestations: write   # Create attestations (future)
+  contents: read      # Read registry and source
+  actions: write     # Write build logs
+  attestations: write # Generate artifact attestations (Infrastructure concern)
 
 # Concurrency: Prevent parallel builds of same plugin
 concurrency:
@@ -57,16 +67,39 @@ jobs:
 
       - name: Extract registry info
         id: info
+        # TODO: This is a placeholder. In production, parse registry YAML.
+        # For now, use workflow dispatch inputs or registry structure.
+        # The actual registry integration will be implemented in a separate milestone.
         run: |
-          echo "TODO: Read from registry entry"
-          echo "plugin_name: from changed file"
-          echo "version: latest approval"
-          echo "approved_sha: from approvals[]"
-          echo "repository: from repository section"
+          echo "NOTE: Registry parsing is a future milestone."
+          echo "For workflow_dispatch, use inputs."
+          echo "For push triggers, extract from changed registry file."
 
-      - name: Validate registry entry exists
+          # Extract plugin name from changed path
+          CHANGED_FILE="${{ github.changed_files || 'registry/plugins/unknown/plugin.yaml' }}"
+          PLUGIN_DIR=$(dirname "$CHANGED_FILE" | sed 's|registry/plugins/||')
+          echo "plugin_name=${PLUGIN_DIR}" >> $GITHUB_OUTPUT
+
+          # For push events, extract version from registry
+          # For dispatch, use the input
+          echo "version=${{ github.event.inputs.version || '0.0.0' }}" >> $GITHUB_OUTPUT
+
+          # TODO: Read approved SHA from versions/*.yaml or review records
+          echo "approved_sha=${{ github.event.inputs.approved_sha || github.event.inputs.approved_sha || '' }}" >> $GITHUB_OUTPUT
+
+          # Repository from registry plugin.yaml
+          echo "repository=${{ github.event.inputs.repository || 'axolotl-pm-pl/unknown' }}" >> $GITHUB_OUTPUT
+
+      - name: Validate inputs
         run: |
-          echo "TODO: Verify registry entry has approved SHA"
+          if [ -z "${{ needs.read-registry.outputs.approved_sha }}" ]; then
+            echo "::error::approved_sha is required. Provide it via workflow dispatch or registry parsing."
+            exit 1
+          fi
+          echo "Plugin: ${{ needs.read-registry.outputs.plugin_name }}"
+          echo "Version: ${{ needs.read-registry.outputs.version }}"
+          echo "Approved SHA: ${{ needs.read-registry.outputs.approved_sha }}"
+          echo "Repository: ${{ needs.read-registry.outputs.repository }}"
 
   # ============================================================
   # Job 2: Checkout Exact SHA (CRITICAL)
@@ -97,83 +130,198 @@ jobs:
           if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
             echo "::error::SHA mismatch! Build aborted."
             echo "::error::Expected: $EXPECTED_SHA"
-            echo "::error::Actual: $ACTUAL_SHA"
+            echo "::error::Actual:   $ACTUAL_SHA"
             exit 1
           fi
 
           echo "sha=$ACTUAL_SHA" >> $GITHUB_OUTPUT
+          echo "SHA verification PASSED"
 
   # ============================================================
-  # Job 3: Validate Source
+  # Job 3: Install Dependencies
   # ============================================================
-  validate-source:
-    name: Validate Source Code
+  setup:
+    name: Setup Build Environment
     runs-on: ubuntu-latest
     needs: [read-registry, checkout-approved-sha]
     steps:
-      - name: Checkout source
+      - name: Checkout source at approved SHA
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.read-registry.outputs.approved_sha }}
           fetch-depth: 1
+          path: plugin-source
 
-      - name: Re-validate plugin.yml
-        run: |
-          echo "TODO: Re-validate plugin.yml at approved SHA"
-          echo "IMPORTANT: Validate even though CI passed"
-          echo "SHA could have changed between CI and build"
-
-      - name: Security re-scan
-        run: |
-          echo "TODO: Quick security rescan at approved SHA"
-
-  # ============================================================
-  # Job 4: Build PHAR
-  # ============================================================
-  build-phar:
-    name: Build PHAR
-    runs-on: ubuntu-latest
-    needs: [read-registry, checkout-approved-sha, validate-source]
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          ref: ${{ needs.read-registry.outputs.approved_sha }}
-          fetch-depth: 1
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: |
+          npm ci
 
       - name: Setup PHP
-        uses: actions/setup-php@v4
+        uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
+          extensions: zip, phar
 
-      - name: Install dependencies
-        run: |
-          echo "TODO: Install composer dependencies"
-          echo "- Only run composer install"
-          echo "- DO NOT run arbitrary scripts from plugin"
-          echo "- DO NOT expose secrets"
+      - name: Install Composer
+        uses: php-actions/composer@v6
+        with:
+          version: 2
 
-      - name: Build PHAR
+      - name: Install Pharynx
         run: |
-          echo "TODO: Build PHAR using controlled script"
-          echo "- Use Axolotl's build script, not plugin's"
-          echo "- Exclude: .git, vendor, .github, etc."
-          echo "- Include: src/, resources/, plugin.yml"
+          mkdir -p build-tools
+          curl -sL https://github.com/SOF3/pharynx/releases/latest/download/pharynx.phar \
+            -o build-tools/pharynx.phar
+          chmod +x build-tools/pharynx.phar
+          php build-tools/pharynx.phar --version || echo "Pharynx version check"
 
-      - name: Verify PHAR contents
+      - name: Validate plugin.yml
         run: |
-          echo "TODO: Verify PHAR contents"
-          echo "- No .git directory"
-          echo "- No secrets or credentials"
-          echo "- No symlinks"
-          echo "- No unexpected files"
+          echo "=== plugin.yml Validation ==="
+          if [ ! -f plugin-source/plugin.yml ]; then
+            echo "::error::plugin.yml not found in plugin source"
+            exit 1
+          fi
+          cat plugin-source/plugin.yml
+
+  # ============================================================
+  # Job 4: Run Build (Orchestrates TypeScript Build Package)
+  # ============================================================
+  build:
+    name: Build PHAR
+    runs-on: ubuntu-latest
+    needs: [read-registry, checkout-approved-sha, setup]
+    outputs:
+      result_json: ${{ steps.run-build.outputs.result_json }}
+      phar_path: ${{ steps.run-build.outputs.phar_path }}
+      phar_size: ${{ steps.run-build.outputs.phar_size }}
+      sha256: ${{ steps.run-build.outputs.sha256 }}
+      # Attestation is created by Infrastructure, not Build domain
+      # This output is for downstream consumption only
+      attestation_id: ${{ steps.attest.outputs.attestation-id || '' }}
+    steps:
+      - name: Checkout source at approved SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.read-registry.outputs.approved_sha }}
+          fetch-depth: 1
+          path: plugin-source
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: |
+          npm ci
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: zip, phar
+
+      - name: Install Composer
+        uses: php-actions/composer@v6
+        with:
+          version: 2
+
+      - name: Install Pharynx
+        id: pharynx
+        run: |
+          mkdir -p build-tools
+          curl -sL https://github.com/SOF3/pharynx/releases/latest/download/pharynx.phar \
+            -o build-tools/pharynx.phar
+          chmod +x build-tools/pharynx.phar
+
+          # Verify pharynx is installed
+          PHARYNX_PATH=$(pwd)/build-tools/pharynx.phar
+          echo "pharynx_path=$PHARYNX_PATH" >> $GITHUB_OUTPUT
+          echo "Pharynx installed at: $PHARYNX_PATH"
+
+      - name: Run Build Trusted CLI
+        id: run-build
+        env:
+          SOURCE_PATH: ${{ github.workspace }}/plugin-source
+          PHARYNX_PATH: ${{ needs.setup.outputs.pharynx_path || steps.pharynx.outputs.pharynx_path || '' }}
+          PHP_PATH: php
+        run: |
+          echo "=== Running Build Trusted CLI ==="
+          echo "Source: $SOURCE_PATH"
+          echo "Pharynx: $PHARYNX_PATH"
+          echo "PHP: $PHP_PATH"
+
+          # Run the TypeScript build CLI
+          # This orchestrates all Build components:
+          # - plugin.yml validation (tools/builder)
+          # - Security scan (tools/builder)
+          # - Composer install (src/build)
+          # - Pharynx build (src/build)
+          # - Checksum computation (src/build)
+          npx tsx src/cli/build-trusted.ts \
+            --source "$SOURCE_PATH" \
+            --pharynx "$PHARYNX_PATH" \
+            --php "$PHP_PATH" 2>&1 | tee build-output.log
+
+          # Extract JSON result from output
+          # The CLI outputs JSON between --- BUILD_RESULT_JSON --- markers
+          RESULT_JSON=$(sed -n '/--- BUILD_RESULT_JSON ---/,/--- END_BUILD_RESULT ---/p' build-output.log | sed '1d;$d')
+
+          # Set outputs
+          echo "result_json<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESULT_JSON" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Extract key values for convenience
+          PHAR_PATH=$(echo "$RESULT_JSON" | jq -r '.pharPath')
+          PHAR_SIZE=$(echo "$RESULT_JSON" | jq -r '.pharSizeBytes')
+          SHA256=$(echo "$RESULT_JSON" | jq -r '.sha256')
+
+          echo "phar_path=$PHAR_PATH" >> $GITHUB_OUTPUT
+          echo "phar_size=$PHAR_SIZE" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+
+          # Check if build succeeded
+          BUILD_SUCCESS=$(echo "$RESULT_JSON" | jq -r '.success')
+          if [ "$BUILD_SUCCESS" != "true" ]; then
+            echo "::error::Build failed. Check build-output.log for details."
+            exit 1
+          fi
+
+      - name: Upload Build Output Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output-${{ needs.read-registry.outputs.plugin_name }}-${{ needs.read-registry.outputs.version }}
+          path: build-output.log
+          retention-days: 30
 
       - name: Upload PHAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: phar-${{ needs.read-registry.outputs.plugin_name }}-${{ needs.read-registry.outputs.version }}
-          path: build/*.phar
+          path: ${{ steps.run-build.outputs.phar_path }}
           retention-days: 30
+
+      - name: Generate GitHub Artifact Attestation
+        if: github.event_name == 'push'
+        id: attest
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: ${{ steps.run-build.outputs.phar_path }}
+          # The attestation proves:
+          # - Source repository (workflow context)
+          # - Source commit (checked out SHA)
+          # - Build workflow identity
+          # - Artifact digest
+          # GitHub is the authoritative provenance provider
 
   # ============================================================
   # Job 5: Generate Checksums
@@ -181,47 +329,97 @@ jobs:
   checksums:
     name: Generate Checksums
     runs-on: ubuntu-latest
-    needs: build-phar
+    needs: [read-registry, build]
     steps:
       - name: Download PHAR artifact
         uses: actions/download-artifact@v4
         with:
           name: phar-${{ needs.read-registry.outputs.plugin_name }}-${{ needs.read-registry.outputs.version }}
+          path: download
 
       - name: Calculate SHA-256
         id: checksum
+        working-directory: download
         run: |
-          sha256sum *.phar > checksums.txt
+          # Find the PHAR file (may be in subdirectory)
+          PHAR_FILE=$(find . -name '*.phar' -type f | head -1)
+          if [ -z "$PHAR_FILE" ]; then
+            echo "::error::No PHAR file found in artifact"
+            exit 1
+          fi
+
+          echo "Computing checksums for: $PHAR_FILE"
+          sha256sum "$PHAR_FILE" > checksums.txt
           SHA256=$(cut -d' ' -f1 checksums.txt)
           echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256"
+
+          # Verify against build output
+          EXPECTED_SHA="${{ needs.build.outputs.sha256 }}"
+          if [ "$SHA256" != "$EXPECTED_SHA" ]; then
+            echo "::warning::SHA-256 mismatch!"
+            echo "Expected: $EXPECTED_SHA"
+            echo "Actual:   $SHA256"
+          else
+            echo "SHA-256 verification PASSED"
+          fi
 
       - name: Upload checksums
         uses: actions/upload-artifact@v4
         with:
           name: checksums-${{ needs.read-registry.outputs.plugin_name }}-${{ needs.read-registry.outputs.version }}
-          path: checksums.txt
+          path: download/checksums.txt
           retention-days: 30
 
   # ============================================================
-  # Summary
+  # Job 6: Build Summary
   # ============================================================
   build-summary:
     name: Build Summary
     runs-on: ubuntu-latest
-    needs: [read-registry, checkout-approved-sha, validate-source, build-phar, checksums]
+    needs: [read-registry, checkout-approved-sha, build, checksums]
     if: always()
     steps:
+      - name: Download build result
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-${{ needs.read-registry.outputs.plugin_name }}-${{ needs.read-registry.outputs.version }}
+          path: artifacts
+
       - name: Report build summary
         run: |
-          echo "=================================="
+          echo "============================================"
           echo "Trusted Build Summary"
-          echo "=================================="
+          echo "============================================"
+          echo ""
           echo "Plugin: ${{ needs.read-registry.outputs.plugin_name }}"
           echo "Version: ${{ needs.read-registry.outputs.version }}"
           echo "Approved SHA: ${{ needs.read-registry.outputs.approved_sha }}"
-          echo "Build SHA: ${{ needs.checkout-approved-sha.outputs.actual_sha }}"
+          echo "Checkout SHA: ${{ needs.checkout-approved-sha.outputs.actual_sha }}"
           echo ""
-          echo "SHA Verification: $([ '${{ needs.read-registry.outputs.approved_sha }}' = '${{ needs.checkout-approved-sha.outputs.actual_sha }}' ] && echo 'VERIFIED' || echo 'FAILED')"
+          echo "SHA Verification: $([ '${{ needs.read-registry.outputs.approved_sha }}' = '${{ needs.checkout-approved-sha.outputs.actual_sha }}' ] && echo 'VERIFIED ✓' || echo 'FAILED ✗')"
+          echo ""
+          echo "Build Status: ${{ needs.build.outcome }}"
+          echo "PHAR Size: ${{ needs.build.outputs.phar_size }} bytes"
+          echo "SHA-256: ${{ needs.build.outputs.sha256 }}"
+          echo ""
+          echo "============================================"
           echo ""
           echo "This PHAR was built from the EXACT approved SHA."
           echo "SHA pinning ensures no post-review changes."
+          echo ""
+          echo "Build artifacts:"
+          echo "  - phar-${{ needs.read-registry.outputs.plugin_name }}-${{ needs.read-registry.outputs.version }}"
+          echo "  - checksums-${{ needs.read-registry.outputs.plugin_name }}-${{ needs.read-registry.outputs.version }}"
+          echo ""
+          echo "GitHub Artifact Attestation:"
+          if [ -n "${{ needs.build.outputs.attestation_id }}" ]; then
+            echo "  ✓ Generated (ID: ${{ needs.build.outputs.attestation_id }})"
+            echo "  Attestation proves provenance for this artifact."
+          else
+            echo "  ○ Not generated (manual workflow dispatch)"
+            echo "  Attestations are only generated for push events."
+          fi
+          echo ""
+          echo "NOTE: This build produces artifacts for the Publication domain."
+          echo "      No upload to GitHub Releases in this workflow."

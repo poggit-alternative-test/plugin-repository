@@ -20,6 +20,7 @@
 10. [Schema Versioning](#schema-versioning)
 11. [Examples](#examples)
 12. [Validation](#validation)
+13. [GitHub Attestations](#github-attestations)
 
 ---
 
@@ -444,15 +445,75 @@ npm run registry:validate -- --json
 
 ---
 
+## GitHub Attestations
+
+### Registry Representation
+
+The registry stores **minimal provenance metadata** only. Full attestations are stored by GitHub.
+
+```yaml
+artifact:
+  release_tag: v2.1.0
+  file: TopStats.phar
+  sha256: a1b2c3d4e5f6...
+  published_at: 2026-08-05T10:00:00Z
+  provenance:
+    type: github-attestation  # Vendor-neutral mechanism
+```
+
+### Vendor-Neutral Design
+
+The `provenance.type` field uses a vendor-neutral string:
+- `github-attestation` - GitHub Artifact Attestations
+- Future values supported without schema redesign:
+  - `gitlab-attestation` - GitLab attestations
+  - `self-attestation` - Manual attestation
+  - `reproducible-build` - Reproducible build verification
+
+### Why Minimal Metadata
+
+| Design | Rationale |
+|--------|-----------|
+| Don't store attestation blob | Duplicates GitHub; maintenance burden |
+| Don't store provenance URLs | Vendor-neutrality; no external dependencies |
+| Store mechanism type | Extensible; clear signal for website |
+
+### What `github_attestation: true` Means
+
+- An official GitHub Artifact Attestation exists
+- The attestation proves provenance (source, commit, workflow)
+- Verification requires GitHub CLI
+
+### What `github_attestation` Does NOT Mean
+
+- The plugin is safe to run
+- The plugin is verified by the system
+- The plugin has been audited
+
+### Verification
+
+Users verify attestations using GitHub CLI:
+
+```bash
+gh attestation verify path/to/TopStats.phar \
+  --repo axolotl-pm-pl/TopStats
+```
+
+For detailed attestation architecture, see [ATTESTATION.md](./ATTESTATION.md).
+
+---
+
 ## Change Log
 
 | Date | Version | Changes |
 |------|---------|---------|
 | 2026-07-25 | 1.0.0 | Initial registry documentation |
+| 2026-08-02 | 1.1.0 | Added GitHub attestations minimal metadata documentation |
 
 ---
 
 **Related Documents**:
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - System architecture
+- [ATTESTATION.md](./ATTESTATION.md) - Attestation architecture
 - [SECURITY.md](./SECURITY.md) - Security model
 - [REVIEW_POLICY.md](./REVIEW_POLICY.md) - Human review requirements

@@ -1,0 +1,389 @@
+name: Publish Release
+
+# ============================================================
+# PUBLICATION WORKFLOW (M7)
+#
+# This workflow publishes build artifacts to GitHub Releases.
+# It is triggered after Build (M6) completes successfully.
+#
+# TRUST MODEL:
+# - Receives verified PHAR and checksums from Build domain
+# - Uses GitHub App for release creation
+# - No plugin code execution
+# - Updates Registry after successful publication
+#
+# INTEGRATION:
+# - Downloads artifacts from build-trusted workflow
+# - Orchestrates Publication service via npm run publish CLI
+# - Updates Registry version record after publication
+# ============================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_name:
+        description: 'Plugin name (e.g., topstats)'
+        required: true
+        type: string
+      version:
+        description: 'Plugin version (e.g., 1.0.0)'
+        required: true
+        type: string
+      storage_repository:
+        description: 'Storage repository (owner/name)'
+        required: true
+        type: string
+      build_run_id:
+        description: 'Build workflow run ID to download artifacts from'
+        required: false
+        type: string
+      phar_artifact_name:
+        description: 'PHAR artifact name'
+        required: false
+        type: string
+      checksums_artifact_name:
+        description: 'Checksums artifact name'
+        required: false
+        type: string
+      draft:
+        description: 'Create as draft release'
+        required: false
+        type: boolean
+        default: true
+      dry_run:
+        description: 'Dry run mode (no actual writes)'
+        required: false
+        type: boolean
+        default: false
+
+  # Future: Trigger after build-trusted completes
+  # workflow_run:
+  #   workflows: ["Build Trusted PHAR"]
+  #   types: [completed]
+
+# Security: Explicit permissions for publication
+# This workflow needs write access to create releases
+permissions:
+  contents: write        # Read registry, write releases
+  actions: read         # Read artifact info
+  packages: write       # Write packages if needed
+
+# Concurrency: One publication per plugin at a time
+concurrency:
+  group: publish-${{ inputs.plugin_name }}
+  cancel-in-progress: false  # Let publication complete
+
+env:
+  ACTIONS_ALLOW_UNSECURE_COMMANDS: false
+
+jobs:
+  # ============================================================
+  # Job 1: Validate Inputs
+  # ============================================================
+  validate-inputs:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    outputs:
+      plugin_name: ${{ steps.validate.outputs.plugin_name }}
+      version: ${{ steps.validate.outputs.version }}
+      storage_repository: ${{ steps.validate.outputs.storage_repository }}
+      draft: ${{ steps.validate.outputs.draft }}
+      dry_run: ${{ steps.validate.outputs.dry_run }}
+    steps:
+      - name: Validate inputs
+        id: validate
+        run: |
+          PLUGIN_NAME="${{ inputs.plugin_name }}"
+          VERSION="${{ inputs.version }}"
+          STORAGE_REPO="${{ inputs.storage_repository }}"
+          DRAFT="${{ inputs.draft }}"
+          DRY_RUN="${{ inputs.dry_run }}"
+
+          # Validate plugin name format
+          if ! echo "$PLUGIN_NAME" | grep -qE '^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$'; then
+            echo "ERROR: Invalid plugin name: $PLUGIN_NAME"
+            exit 1
+          fi
+
+          # Validate version format
+          if ! echo "$VERSION" | grep -qE '^\d+\.\d+\.\d+(-[a-z0-9.]+)?$'; then
+            echo "ERROR: Invalid version: $VERSION"
+            exit 1
+          fi
+
+          # Validate repository format
+          if ! echo "$STORAGE_REPO" | grep -qE '^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$'; then
+            echo "ERROR: Invalid repository format: $STORAGE_REPO"
+            exit 1
+          fi
+
+          # Default draft to true if not specified
+          if [ -z "$DRAFT" ]; then
+            DRAFT="true"
+          fi
+
+          # Default dry_run to false
+          if [ -z "$DRY_RUN" ]; then
+            DRY_RUN="false"
+          fi
+
+          echo "Validation passed:"
+          echo "  Plugin: $PLUGIN_NAME"
+          echo "  Version: $VERSION"
+          echo "  Repository: $STORAGE_REPO"
+          echo "  Draft: $DRAFT"
+          echo "  Dry Run: $DRY_RUN"
+
+          echo "plugin_name=$PLUGIN_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "storage_repository=$STORAGE_REPO" >> $GITHUB_OUTPUT
+          echo "draft=$DRAFT" >> $GITHUB_OUTPUT
+          echo "dry_run=$DRY_RUN" >> $GITHUB_OUTPUT
+
+  # ============================================================
+  # Job 2: Download Build Artifacts
+  # ============================================================
+  download-artifacts:
+    name: Download Build Artifacts
+    runs-on: ubuntu-latest
+    needs: validate-inputs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download PHAR artifact
+        if: needs.validate-inputs.outputs.dry_run == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.phar_artifact_name || format('phar-{0}-{1}', needs.validate-inputs.outputs.plugin_name, needs.validate-inputs.outputs.version) }}
+          path: artifacts
+
+      - name: Download checksums artifact
+        if: needs.validate-inputs.outputs.dry_run == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.checksums_artifact_name || format('checksums-{0}-{1}', needs.validate-inputs.outputs.plugin_name, needs.validate-inputs.outputs.version) }}
+          path: artifacts
+
+      - name: Find PHAR file
+        if: needs.validate-inputs.outputs.dry_run == 'false'
+        id: find-phar
+        run: |
+          PHAR_FILE=$(find artifacts -name '*.phar' -type f | head -1)
+          if [ -z "$PHAR_FILE" ]; then
+            echo "ERROR: No PHAR file found in artifacts"
+            exit 1
+          fi
+          echo "phar_path=$PHAR_FILE" >> $GITHUB_OUTPUT
+          echo "PHAR found: $PHAR_FILE"
+
+      - name: Read checksums
+        if: needs.validate-inputs.outputs.dry_run == 'false'
+        id: checksums
+        run: |
+          if [ -f artifacts/checksums.txt ]; then
+            SHA256=$(cut -d' ' -f1 artifacts/checksums.txt | head -1)
+            echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+            echo "SHA-256 from checksums: $SHA256"
+          else
+            echo "WARNING: checksums.txt not found"
+          fi
+
+      - name: Report dry run mode
+        if: needs.validate-inputs.outputs.dry_run == 'true'
+        run: |
+          echo "=== DRY RUN MODE ==="
+          echo "Skipping artifact download in dry run mode."
+          echo "Would publish to: ${{ needs.validate-inputs.outputs.storage_repository }}"
+          echo "Version: ${{ needs.validate-inputs.outputs.version }}"
+
+  # ============================================================
+  # Job 3: Publish to GitHub Release
+  # ============================================================
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, download-artifacts]
+    environment:
+      name: publication
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Publish to GitHub Release
+        if: needs.validate-inputs.outputs.dry_run == 'false'
+        id: publish
+        env:
+          PUB_GITHUB_TOKEN: ${{ secrets.PUB_GITHUB_TOKEN }}
+          PUB_STORAGE_OWNER: ${{ secrets.PUB_STORAGE_OWNER }}
+          PUB_API_URL: ${{ secrets.PUB_API_URL }}
+        run: |
+          PLUGIN_NAME="${{ needs.validate-inputs.outputs.plugin_name }}"
+          VERSION="${{ needs.validate-inputs.outputs.version }}"
+          STORAGE_REPO="${{ needs.validate-inputs.outputs.storage_repository }}"
+          PHAR_PATH="${{ needs.download-artifacts.outputs.phar_path }}"
+          SHA256="${{ needs.download-artifacts.outputs.sha256 }}"
+          DRAFT="${{ needs.validate-inputs.outputs.draft }}"
+
+          echo "=== Publishing to GitHub Release ==="
+          echo "Plugin: $PLUGIN_NAME"
+          echo "Version: $VERSION"
+          echo "Repository: $STORAGE_REPO"
+          echo "PHAR: $PHAR_PATH"
+          echo "SHA-256: $SHA256"
+          echo "Draft: $DRAFT"
+          echo ""
+
+          # Build publish command
+          CMD="npm run publish -- publish"
+          CMD="$CMD --plugin-name $PLUGIN_NAME"
+          CMD="$CMD --version $VERSION"
+          CMD="$CMD --storage-repository $STORAGE_REPO"
+          CMD="$CMD --phar $PHAR_PATH"
+          CMD="$CMD --sha256 $SHA256"
+
+          if [ "$DRAFT" == "true" ]; then
+            CMD="$CMD --draft"
+          else
+            CMD="$CMD --publish"
+          fi
+
+          echo "Running: $CMD"
+          echo ""
+
+          # Run publish CLI
+          RESULT=$(npm run publish -- publish 2>&1 | tee /dev/stderr)
+          EXIT_CODE=$?
+
+          # Extract published_at from JSON result
+          PUBLISHED_AT=$(echo "$RESULT" | sed -n '/--- PUBLICATION_RESULT_JSON ---/,/--- END PUBLICATION_RESULT ---/p' | grep '"publishedAt"' | sed 's/.*"\([0-9TZ:-]\+\)".*/\1/' | tr -d ' ')
+          echo "published_at=$PUBLISHED_AT" >> $GITHUB_OUTPUT
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "Publication completed successfully"
+            echo "Published at: $PUBLISHED_AT"
+          else
+            echo "::error::Publication failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+
+      - name: Report dry run mode
+        if: needs.validate-inputs.outputs.dry_run == 'true'
+        run: |
+          echo "=== DRY RUN - Publication Skipped ==="
+          echo ""
+          echo "Would publish:"
+          echo "  Plugin: ${{ needs.validate-inputs.outputs.plugin_name }}"
+          echo "  Version: ${{ needs.validate-inputs.outputs.version }}"
+          echo "  Repository: ${{ needs.validate-inputs.outputs.storage_repository }}"
+          echo ""
+          echo "To execute, re-run with dry_run=false"
+
+  # ============================================================
+  # Job 4: Update Registry
+  # ============================================================
+  update-registry:
+    name: Update Registry
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, publish-release]
+    if: |
+      needs.validate-inputs.outputs.dry_run == 'false' &&
+      needs.publish-release.result == 'success'
+    steps:
+      - name: Checkout registry
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Update registry version record
+        if: needs.validate-inputs.outputs.dry_run == 'false'
+        id: update
+        env:
+          REGISTRY_ROOT: ${{ github.workspace }}/registry
+        run: |
+          PLUGIN_ID="${{ needs.validate-inputs.outputs.plugin_name }}"
+          VERSION="${{ needs.validate-inputs.outputs.version }}"
+          RELEASE_TAG="v${{ needs.validate-inputs.outputs.version }}"
+          PHAR_FILE="${{ needs.download-artifacts.outputs.phar_path }}"
+          SHA256="${{ needs.download-artifacts.outputs.sha256 }}"
+          PUBLISHED_AT="${{ needs.publish-release.outputs.published_at }}"
+
+          echo "=== Updating Registry ==="
+          echo "Plugin: $PLUGIN_ID"
+          echo "Version: $VERSION"
+          echo ""
+
+          # Run registry update CLI
+          npm run registry:update -- update-published \
+            --plugin-id "$PLUGIN_ID" \
+            --version "$VERSION" \
+            --release-tag "$RELEASE_TAG" \
+            --phar-file "$(basename "$PHAR_FILE")" \
+            --sha256 "$SHA256" \
+            --published-at "$PUBLISHED_AT" \
+            --registry-root "$GITHUB_WORKSPACE"
+
+      - name: Commit registry update
+        if: needs.validate-inputs.outputs.dry_run == 'false'
+        run: |
+          git config user.name "GitHub Actions" || true
+          git config user.email "actions@github.com" || true
+          git add registry/
+          git diff --cached --quiet || git commit -m "Update ${{ needs.validate-inputs.outputs.plugin_name }}@${{ needs.validate-inputs.outputs.version }} published status"
+          git push
+
+  # ============================================================
+  # Job 5: Publication Summary
+  # ============================================================
+  publish-summary:
+    name: Publication Summary
+    runs-on: ubuntu-latest
+    needs: [validate-inputs, publish-release]
+    if: always()
+    steps:
+      - name: Report summary
+        run: |
+          echo "============================================"
+          echo "Publication Summary"
+          echo "============================================"
+          echo ""
+          echo "Plugin: ${{ needs.validate-inputs.outputs.plugin_name }}"
+          echo "Version: ${{ needs.validate-inputs.outputs.version }}"
+          echo "Repository: ${{ needs.validate-inputs.outputs.storage_repository }}"
+          echo ""
+          echo "Dry Run: ${{ needs.validate-inputs.outputs.dry_run }}"
+          echo "Draft: ${{ needs.validate-inputs.outputs.draft }}"
+          echo ""
+
+          if [ '${{ needs.validate-inputs.outputs.dry_run }}' == 'true' ]; then
+            echo "STATUS: Dry run completed"
+          elif [ '${{ needs.publish-release.result }}' == 'success' ]; then
+            echo "STATUS: Publication completed successfully"
+          else
+            echo "STATUS: Publication failed"
+          fi
+          echo ""
+          echo "============================================"
