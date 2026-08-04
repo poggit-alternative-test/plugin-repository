@@ -8,6 +8,7 @@ import { VersionPage } from '@/pages/VersionPage';
 import { AuthorPage } from '@/pages/AuthorPage';
 import { AuthorsPage } from '@/pages/AuthorsPage';
 import { AboutPage } from '@/pages/AboutPage';
+import { PluginsPage } from '@/pages/PluginsPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
 // Development-only: Import playground if in development mode
@@ -49,6 +50,10 @@ const router = createBrowserRouter([
       {
         path: 'about',
         element: <AboutPage />,
+      },
+      {
+        path: 'plugins',
+        element: <PluginsPage />,
       },
       {
         path: 'authors/:owner',

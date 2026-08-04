@@ -8,7 +8,7 @@
 
 import { useState, useCallback } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { Search, Menu, X } from 'lucide-react';
+import { Search, Menu, X, Package } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 
 export function Header() {
@@ -74,6 +74,25 @@ export function Header() {
           style={{ display: 'flex', alignItems: 'center', gap: 2 }}
           aria-label="Main navigation"
         >
+          <NavLink
+            to="/plugins"
+            style={({ isActive }) => ({
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 12px',
+              fontSize: 13,
+              fontWeight: 500,
+              borderRadius: 8,
+              backgroundColor: isActive ? colors.brandBg : 'transparent',
+              color: isActive ? colors.brand : colors.textSecondary,
+              textDecoration: 'none',
+              transition: 'all 0.15s',
+            })}
+          >
+            <Package className="h-4 w-4" />
+            Plugins
+          </NavLink>
           <NavLink
             to="/search"
             style={({ isActive }) => ({
