@@ -22,52 +22,57 @@ const devRoutes = PlaygroundPage
   ? [{ path: 'playground', element: <PlaygroundPage /> }]
   : [];
 
-const router = createBrowserRouter([
+const router = createBrowserRouter(
+  [
+    {
+      path: '/',
+      element: <RootLayout />,
+      children: [
+        {
+          index: true,
+          element: <HomePage />,
+        },
+        {
+          path: 'search',
+          element: <SearchPage />,
+        },
+        {
+          path: 'plugins/:slug',
+          element: <PluginPage />,
+        },
+        {
+          path: 'versions/:slug/:version',
+          element: <VersionPage />,
+        },
+        {
+          path: 'authors',
+          element: <AuthorsPage />,
+        },
+        {
+          path: 'about',
+          element: <AboutPage />,
+        },
+        {
+          path: 'plugins',
+          element: <PluginsPage />,
+        },
+        {
+          path: 'authors/:owner',
+          element: <AuthorPage />,
+        },
+        // Development-only routes
+        ...devRoutes,
+        {
+          path: '*',
+          element: <NotFoundPage />,
+        },
+      ],
+    },
+  ],
   {
-    path: '/',
-    element: <RootLayout />,
-    children: [
-      {
-        index: true,
-        element: <HomePage />,
-      },
-      {
-        path: 'search',
-        element: <SearchPage />,
-      },
-      {
-        path: 'plugins/:slug',
-        element: <PluginPage />,
-      },
-      {
-        path: 'versions/:slug/:version',
-        element: <VersionPage />,
-      },
-      {
-        path: 'authors',
-        element: <AuthorsPage />,
-      },
-      {
-        path: 'about',
-        element: <AboutPage />,
-      },
-      {
-        path: 'plugins',
-        element: <PluginsPage />,
-      },
-      {
-        path: 'authors/:owner',
-        element: <AuthorPage />,
-      },
-      // Development-only routes
-      ...devRoutes,
-      {
-        path: '*',
-        element: <NotFoundPage />,
-      },
-    ],
-  },
-]);
+    basename: '/plugin-repository',
+  }
+);
 
 export function AppRouter() {
   return <RouterProvider router={router} />;
