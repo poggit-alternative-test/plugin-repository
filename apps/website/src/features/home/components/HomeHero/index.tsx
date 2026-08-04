@@ -121,7 +121,7 @@ export function HomeHero({ initialQuery = '', pluginCount = 0 }: HomeHeroProps) 
               backgroundClip: 'text',
             }}
           >
-            PocketMine-MP  
+            PocketMine-MP 
           </span>
         </h1>
 
