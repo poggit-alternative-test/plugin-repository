@@ -5,8 +5,11 @@ on:
     branches:
       - main
     paths:
-      - 'apps/website/**'
-      - 'public/generated/**'
+      - 'apps/website/src/**'
+      - 'apps/website/public/**'
+      - 'apps/website/package.json'
+      - 'apps/website/vite.config.ts'
+      - 'apps/website/tsconfig.json'
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN
@@ -33,7 +36,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - name: Cache node_modules
         uses: actions/cache@v4
@@ -50,12 +53,6 @@ jobs:
       - name: Build
         working-directory: apps/website
         run: npm run build
-
-      - name: Copy generated data to dist
-        run: |
-          mkdir -p apps/website/dist/generated
-          cp -r public/generated/* apps/website/dist/generated/ 2>/dev/null || true
-          cp public/brand/logo/mark.svg apps/website/dist/brand/logo/mark.svg 2>/dev/null || true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
