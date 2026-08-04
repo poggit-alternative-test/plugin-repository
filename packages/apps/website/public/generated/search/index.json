@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-02T09:08:12.795Z",
+  "plugins": [],
+  "metadata": {
+    "count": 0,
+    "fields": [
+      "name",
+      "nameKeywords",
+      "summary",
+      "tags",
+      "author",
+      "description"
+    ]
+  }
+}

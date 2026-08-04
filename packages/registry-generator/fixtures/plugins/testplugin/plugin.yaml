@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "testplugin",
+  "upstream": {
+    "repository": "testauthor/TestPlugin",
+    "branch": "main"
+  },
+  "storage": {
+    "repository": "axolotl-pm-pl/TestPlugin"
+  }
+}

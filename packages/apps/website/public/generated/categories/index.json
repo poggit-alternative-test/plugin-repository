@@ -1,0 +1,69 @@
+{
+  "categories": [
+    {
+      "id": "admin",
+      "name": "Admin Tools",
+      "slug": "admin",
+      "description": "Server administration and management plugins",
+      "icon": "shield",
+      "pluginCount": 0
+    },
+    {
+      "id": "economy",
+      "name": "Economy",
+      "slug": "economy",
+      "description": "Economy, shops, and currency plugins",
+      "icon": "coins",
+      "pluginCount": 0
+    },
+    {
+      "id": "gameplay",
+      "name": "Gameplay",
+      "slug": "gameplay",
+      "description": "Game mechanics and custom gameplay features",
+      "icon": "gamepad",
+      "pluginCount": 0
+    },
+    {
+      "id": "teleport",
+      "name": "Teleport",
+      "slug": "teleport",
+      "description": "Warps, portals, homes, and teleportation plugins",
+      "icon": "map",
+      "pluginCount": 0
+    },
+    {
+      "id": "chat",
+      "name": "Chat",
+      "slug": "chat",
+      "description": "Chat formatting, channels, and messaging plugins",
+      "icon": "message",
+      "pluginCount": 0
+    },
+    {
+      "id": "protection",
+      "name": "Protection",
+      "slug": "protection",
+      "description": "Anti-grief, permissions, and protection plugins",
+      "icon": "lock",
+      "pluginCount": 0
+    },
+    {
+      "id": "world",
+      "name": "World",
+      "slug": "world",
+      "description": "World management, generators, and editing plugins",
+      "icon": "globe",
+      "pluginCount": 0
+    },
+    {
+      "id": "misc",
+      "name": "Miscellaneous",
+      "slug": "misc",
+      "description": "Other plugins that do not fit other categories",
+      "icon": "box",
+      "pluginCount": 0
+    }
+  ],
+  "count": 8
+}

@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light theme (default) - Zinc neutrals + Axolotl Blue brand */
+    --color-bg: #FAFAFA;
+    --color-surface: #FFFFFF;
+    --color-sidebar-bg: #F4F4F5;
+    --color-border: #E4E4E7;
+    --color-card: #F4F4F5;
+    --color-text-primary: #09090B;
+    --color-text-secondary: #52525B;
+    --color-text-muted: #A1A1AA;
+    --color-brand: #084DE6;
+    --color-brand-bg: #EBF5FF;
+  }
+
+  .dark {
+    /* Dark theme - Zinc neutrals + Axolotl Blue brand */
+    --color-bg: #09090B;
+    --color-surface: #111113;
+    --color-sidebar-bg: #0D0D0F;
+    --color-border: #27272A;
+    --color-card: #18181B;
+    --color-text-primary: #FAFAFA;
+    --color-text-secondary: #A1A1AA;
+    --color-text-muted: #52525B;
+    --color-brand-bg: #010B2E;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply antialiased bg-[var(--color-bg)] text-[var(--color-text-primary)];
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center rounded-[10px] px-4 py-2 text-sm font-medium transition-all duration-150;
+  }
+
+  .btn-primary {
+    @apply bg-brand-600 text-white hover:bg-brand-700;
+  }
+
+  .btn-secondary {
+    @apply bg-[var(--color-card)] text-[var(--color-text-primary)] hover:opacity-90;
+  }
+
+  .input {
+    @apply block w-full rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)];
+  }
+
+  .card {
+    @apply rounded-[12px] border border-[var(--color-border)] bg-[var(--color-card)] p-4;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Custom scrollbar - Zinc palette */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Theme transition */
+body {
+  transition: background-color 0.15s ease, color 0.15s ease;
+}

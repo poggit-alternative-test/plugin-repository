@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-02T09:08:12.782Z",
+  "registryCommit": "unknown",
+  "generatorVersion": "0.1.0",
+  "pluginCount": 0,
+  "versionCount": 0,
+  "authorCount": 0,
+  "categoryCount": 8,
+  "indexes": {
+    "plugins": "2026-08-02T09:08:12.782Z",
+    "versions": "2026-08-02T09:08:12.782Z",
+    "search": "2026-08-02T09:08:12.782Z",
+    "authors": "2026-08-02T09:08:12.782Z"
+  }
+}
