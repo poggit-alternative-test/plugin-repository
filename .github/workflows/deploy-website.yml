@@ -8,6 +8,7 @@ on:
       - 'apps/website/src/**'
       - 'apps/website/public/**'
       - 'apps/website/package.json'
+      - 'apps/website/package-lock.json'
       - 'apps/website/vite.config.ts'
       - 'apps/website/tsconfig.json'
   workflow_dispatch:
@@ -36,22 +37,23 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Cache node_modules
         uses: actions/cache@v4
         with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          path: apps/website/node_modules
+          key: website-modules-${{ hashFiles('apps/website/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-
+            website-modules-
 
       - name: Install dependencies
+        working-directory: apps/website
         run: npm ci
 
       - name: Build
         working-directory: apps/website
-        run: npm run build
+        run: npx vite build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
