@@ -34,7 +34,7 @@ export interface DataSourceConfig {
  * Assumes generated files are in /generated/ at the app root
  */
 const DEFAULT_CONFIG: DataSourceConfig = {
-  basePath: '/generated',
+  basePath: `${import.meta.env.BASE_URL}generated`,
   useApi: false,
 };
 
@@ -48,7 +48,7 @@ let currentConfig: DataSourceConfig = { ...DEFAULT_CONFIG };
  *
  * @example
  * // Use static JSON files (default)
- * configureDataSource({ basePath: '/generated' });
+ * configureDataSource({ basePath: `${import.meta.env.BASE_URL}generated` });
  *
  * // Use remote API (future)
  * configureDataSource({

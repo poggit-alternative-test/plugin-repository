@@ -23,7 +23,7 @@ export function PluginsPage() {
   useEffect(() => {
     async function loadPlugins() {
       try {
-        const response = await fetch('/generated/plugins/index.json');
+        const response = await fetch(`${import.meta.env.BASE_URL}generated/plugins/index.json`);
         if (!response.ok) {
           throw new Error('Failed to load plugins');
         }

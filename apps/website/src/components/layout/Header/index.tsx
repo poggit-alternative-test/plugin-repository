@@ -51,7 +51,7 @@ export function Header() {
           aria-label="Axolotl PM home"
         >
           <img
-            src="/brand/logo/mark.svg"
+            src={`${import.meta.env.BASE_URL}brand/logo/mark.svg`}
             alt=""
             width={28}
             height={28}

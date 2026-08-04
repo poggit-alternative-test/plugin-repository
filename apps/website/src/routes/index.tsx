@@ -22,6 +22,8 @@ const devRoutes = PlaygroundPage
   ? [{ path: 'playground', element: <PlaygroundPage /> }]
   : [];
 
+const BASENAME = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 const router = createBrowserRouter(
   [
     {
@@ -70,7 +72,7 @@ const router = createBrowserRouter(
     },
   ],
   {
-    basename: '/plugin-repository',
+    basename: BASENAME || '/',
   }
 );
 
