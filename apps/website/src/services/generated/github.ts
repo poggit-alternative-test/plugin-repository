@@ -115,35 +115,25 @@ export async function fetchReleases(repo: string): Promise<Version[]> {
 }
 
 /**
- * Fetch README.md content from GitHub
+ * Fetch README.md from GitHub RAW content
+ * Uses /HEAD/ path - GitHub automatically redirects to default branch
  */
 export async function fetchReadme(repo: string): Promise<string | null> {
   try {
     const [owner, repoName] = repo.split('/');
     if (!owner || !repoName) return null;
 
-    // Try common README filenames
+    // Try common README filenames with /HEAD/ - GitHub auto-redirects to default branch
     const readmeNames = ['README.md', 'README', 'readme.md', 'Readme.md'];
 
     for (const name of readmeNames) {
       try {
         const response = await fetch(
-          `https://api.github.com/repos/${owner}/${repoName}/contents/${name}`,
-          {
-            headers: {
-              'Accept': 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
-            },
-          }
+          `https://raw.githubusercontent.com/${owner}/${repoName}/HEAD/${name}`
         );
 
         if (response.ok) {
-          const data = await response.json();
-          if (data.content) {
-            // Decode base64 content
-            const content = atob(data.content.replace(/\n/g, ''));
-            return content;
-          }
+          return await response.text();
         }
       } catch {
         continue;

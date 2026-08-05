@@ -2,19 +2,19 @@
  * PluginFeature Component
  *
  * Plugin detail page with tabs.
- * Figma tokens: 2-column grid (1fr 296px sidebar).
+ * Uses marked.js + highlight.js from CDN (same as HTML example)
  */
+
+// @ts-ignore - from CDN
+declare const marked: any;
+// @ts-ignore - from CDN
+declare const hljs: any;
 
 import { useState } from 'react';
 import { usePluginFeature } from './hooks';
 import { LoadingState, ErrorState } from '@/components/ui';
 import { useTheme } from '@/contexts/ThemeContext';
 import type { Plugin, Version } from '@/services/generated';
-
-export interface PluginFeatureProps {
-  pluginId: string;
-  version?: string;
-}
 
 function Badge({ label, color }: { label: string; color: 'blue' | 'green' | 'zinc' | 'red' | 'amber' }) {
   const { colors } = useTheme();
@@ -42,7 +42,7 @@ function Badge({ label, color }: { label: string; color: 'blue' | 'green' | 'zin
   );
 }
 
-export function PluginFeature({ pluginId, version }: PluginFeatureProps) {
+export function PluginFeature({ pluginId, version }: { pluginId: string; version?: string }) {
   const { colors } = useTheme();
   const { plugin, releases, readme, dependencies, loading, githubLoading, error } = usePluginFeature(pluginId, version);
   const [tab, setTab] = useState('Installation');
@@ -65,7 +65,6 @@ export function PluginFeature({ pluginId, version }: PluginFeatureProps) {
     </div>;
   }
 
-  // GitHub URLs
   const githubUrl = plugin.repoUrl || `https://github.com/${plugin.repo}`;
   const starsUrl = `${githubUrl}/stargazers`;
   const issuesUrl = `${githubUrl}/issues/new`;
@@ -159,21 +158,16 @@ function PluginTabs({ tab, onTab, hasReleases, hasDependencies }: { tab: string;
 
 function InstallationTab({ plugin, releases }: { plugin: Plugin; releases: Version[] }) {
   const { colors } = useTheme();
-
-  // Get the latest release with download URL
   const latestRelease = releases.length > 0 ? releases[0] : null;
   const downloadUrl = latestRelease?.artifact?.downloadUrl;
-  const directDownloadUrl = downloadUrl && downloadUrl !== latestRelease.html_url
-    ? downloadUrl
-    : latestRelease?.html_url;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <h2 style={{ fontSize: 18, fontWeight: 600, color: colors.textPrimary, margin: 0 }}>Installation</h2>
 
-      {directDownloadUrl ? (
+      {downloadUrl ? (
         <a
-          href={directDownloadUrl}
+          href={downloadUrl}
           target="_blank"
           rel="noopener noreferrer"
           style={{
@@ -199,18 +193,6 @@ function InstallationTab({ plugin, releases }: { plugin: Plugin; releases: Versi
       )}
 
       <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 10 }}>
-        <div style={{ padding: '8px 14px', borderBottom: `1px solid ${colors.border}`, display: 'flex', alignItems: 'center' }}>
-          <span style={{ fontSize: 11, color: colors.textMuted, fontFamily: 'monospace' }}>poggit.json</span>
-        </div>
-        <div style={{ padding: 16, fontFamily: 'monospace', fontSize: 12, color: colors.textSecondary, whiteSpace: 'pre-wrap' }}>
-          <span style={{ color: colors.textMuted }}>{"{\n"}</span>
-          <span style={{ color: colors.textMuted }}>  </span><span style={{ color: colors.brand }}>"repo"</span><span style={{ color: colors.textMuted }}>: </span><span style={{ color: colors.success }}>"{plugin.repo || `${plugin.author}/${plugin.id}`}"</span><span style={{ color: colors.textMuted }}>,\n</span>
-          <span style={{ color: colors.textMuted }}>  </span><span style={{ color: colors.brand }}>"version"</span><span style={{ color: colors.textMuted }}>: </span><span style={{ color: colors.success }}>"{plugin.latestVersion}"</span><span style={{ color: colors.textMuted }}>\n</span>
-          <span style={{ color: colors.textMuted }}>{"}"}</span>
-        </div>
-      </div>
-
-      <div style={{ background: colors.card, border: `1px solid ${colors.border}`, borderRadius: 10 }}>
         <div style={{ padding: '8px 14px', borderBottom: `1px solid ${colors.border}`, fontSize: 11, color: colors.textMuted, fontFamily: 'monospace' }}>
           Terminal
         </div>
@@ -223,7 +205,7 @@ function InstallationTab({ plugin, releases }: { plugin: Plugin; releases: Versi
 }
 
 function OverviewTab({ readme, loading }: { readme: string | null; loading: boolean }) {
-  const { colors } = useTheme();
+  const { colors, mode } = useTheme();
 
   if (loading) {
     return (
@@ -243,31 +225,33 @@ function OverviewTab({ readme, loading }: { readme: string | null; loading: bool
     );
   }
 
-  // Simple markdown to HTML conversion (basic)
-  const htmlContent = readme
-    .replace(/^### (.+)$/gm, '<h3 style="font-size: 16px; font-weight: 600; color: #1f2937; margin: 20px 0 10px;">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 style="font-size: 18px; font-weight: 600; color: #1f2937; margin: 24px 0 12px;">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 style="font-size: 20px; font-weight: 600; color: #1f2937; margin: 28px 0 14px;">$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 12px;">$1</code>')
-    .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color: #3b82f6;">$1</a>')
-    .replace(/\n\n/g, '</p><p style="font-size: 14px; color: #4b5563; line-height: 1.7; margin: 0 0 12px;">')
-    .replace(/\n/g, '<br/>');
+  // Configure marked exactly like HTML example
+  marked.setOptions({
+    gfm: true,
+    breaks: true,
+    highlight: function(code: string, lang: string) {
+      if (lang && hljs.getLanguage(lang)) {
+        try { return hljs.highlight(code, { language: lang }).value; } catch (_) {}
+      }
+      return code;
+    }
+  });
+
+  const html = marked.parse(readme);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <h2 style={{ fontSize: 18, fontWeight: 600, color: colors.textPrimary, margin: 0 }}>Overview</h2>
-      <div
-        style={{ fontSize: 14, color: colors.textSecondary, lineHeight: 1.7 }}
-        dangerouslySetInnerHTML={{ __html: `<p style="font-size: 14px; color: #4b5563; line-height: 1.7; margin: 0 0 12px;">${htmlContent}</p>` }}
+      <article
+        className={`markdown-body ${mode === 'dark' ? 'dark' : ''}`}
+        dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>
   );
 }
 
 function VersionsTab({ plugin, releases, loading }: { plugin: Plugin; releases: Version[]; loading: boolean }) {
-  const { colors } = useTheme();
+  const { colors, mode } = useTheme();
 
   if (loading) {
     return (
@@ -305,24 +289,23 @@ function VersionsTab({ plugin, releases, loading }: { plugin: Plugin; releases: 
                   v{release.version}
                 </span>
                 {index === 0 && <Badge label="Latest" color="blue" />}
-                {release.status === 'published' && <Badge label="published" color="green" />}
               </div>
               <span style={{ fontSize: 12, color: colors.textMuted }}>
                 {new Date(release.release.publishedAt).toLocaleDateString()}
               </span>
             </div>
             {release.release.changelog && (
-              <details>
+              <details style={{ marginTop: 8 }}>
                 <summary style={{ fontSize: 12, color: colors.textSecondary, cursor: 'pointer', marginBottom: 8 }}>
                   Changelog
                 </summary>
-                <div style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                  {release.release.changelog}
+                <div className={`markdown-body ${mode === 'dark' ? 'dark' : ''}`} style={{ fontSize: 12, lineHeight: 1.6 }}>
+                  <div dangerouslySetInnerHTML={{ __html: marked.parse(release.release.changelog) }} />
                 </div>
               </details>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              {release.artifact?.downloadUrl && release.artifact.downloadUrl !== release.release.tag ? (
+              {release.artifact?.downloadUrl ? (
                 <a
                   href={release.artifact.downloadUrl}
                   target="_blank"
@@ -341,7 +324,7 @@ function VersionsTab({ plugin, releases, loading }: { plugin: Plugin; releases: 
                 </a>
               ) : (
                 <a
-                  href={release.release.tag ? `https://github.com/${plugin.repo}/releases/tag/${release.release.tag}` : release.source.upstream}
+                  href={`https://github.com/${plugin.repo}/releases/tag/${release.release.tag}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
@@ -368,10 +351,7 @@ function VersionsTab({ plugin, releases, loading }: { plugin: Plugin; releases: 
 function DependenciesTab({ dependencies }: { dependencies: { depend: string[]; softdepend: string[] } }) {
   const { colors } = useTheme();
 
-  const hasDepend = dependencies.depend.length > 0;
-  const hasSoftdepend = dependencies.softdepend.length > 0;
-
-  if (!hasDepend && !hasSoftdepend) {
+  if (dependencies.depend.length === 0 && dependencies.softdepend.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
         <h2 style={{ fontSize: 18, fontWeight: 600, color: colors.textPrimary, margin: 0 }}>Dependencies</h2>
@@ -384,17 +364,14 @@ function DependenciesTab({ dependencies }: { dependencies: { depend: string[]; s
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
       <h2 style={{ fontSize: 18, fontWeight: 600, color: colors.textPrimary, margin: 0 }}>Dependencies</h2>
 
-      {hasDepend && (
+      {dependencies.depend.length > 0 && (
         <div>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: colors.textPrimary, margin: '0 0 12px' }}>
-            Required Dependencies ({dependencies.depend.length})
+            Required ({dependencies.depend.length})
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {dependencies.depend.map(dep => (
               <div key={dep} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
                 padding: '10px 14px',
                 background: colors.card,
                 border: `1px solid ${colors.border}`,
@@ -407,17 +384,14 @@ function DependenciesTab({ dependencies }: { dependencies: { depend: string[]; s
         </div>
       )}
 
-      {hasSoftdepend && (
+      {dependencies.softdepend.length > 0 && (
         <div>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: colors.textPrimary, margin: '0 0 12px' }}>
-            Soft Dependencies ({dependencies.softdepend.length})
+            Optional ({dependencies.softdepend.length})
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {dependencies.softdepend.map(dep => (
               <div key={dep} style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
                 padding: '10px 14px',
                 background: colors.card,
                 border: `1px solid ${colors.border}`,
@@ -435,13 +409,7 @@ function DependenciesTab({ dependencies }: { dependencies: { depend: string[]; s
 
 function Sidebar({ plugin, githubUrl, releases }: { plugin: Plugin; githubUrl: string; releases: Version[] }) {
   const { colors } = useTheme();
-  const downloadCount = releases.reduce((sum, r) => sum + (r.artifact?.downloadUrl ? 1 : 0), 0);
-
-  const metadata = [
-    { label: 'Version', value: plugin.latestVersion, mono: true },
-    { label: 'Author', value: plugin.author },
-    { label: 'Downloads', value: downloadCount > 0 ? downloadCount.toLocaleString() : 'N/A' },
-  ];
+  const downloadCount = releases.length;
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -474,20 +442,22 @@ function Sidebar({ plugin, githubUrl, releases }: { plugin: Plugin; githubUrl: s
           color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'not-allowed',
           opacity: 0.6,
         }} disabled>
-          No Download Available
+          No Download
         </button>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {metadata.map(item => (
+        {[
+          { label: 'Version', value: plugin.latestVersion },
+          { label: 'Author', value: plugin.author },
+          { label: 'Releases', value: String(downloadCount) },
+        ].map(item => (
           <div key={item.label} style={{
             display: 'flex', justifyContent: 'space-between', padding: '8px 0',
             borderBottom: `1px solid ${colors.borderSubtle}`, fontSize: 12,
           }}>
             <span style={{ color: colors.textMuted }}>{item.label}</span>
-            <span style={{ color: colors.textSecondary, fontFamily: item.mono ? 'monospace' : undefined }}>
-              {item.value}
-            </span>
+            <span style={{ color: colors.textSecondary }}>{item.value}</span>
           </div>
         ))}
       </div>

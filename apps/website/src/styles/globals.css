@@ -91,3 +91,25 @@
 body {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
+
+/* Markdown body - let github-markdown-css handle everything */
+.markdown-body {
+  word-wrap: break-word;
+  color: var(--color-text-secondary);
+}
+
+/* Dark mode adjustments - only override colors, not structure */
+.dark.markdown-body {
+  color-scheme: dark;
+}
+
+/* Ensure links match our brand color */
+.markdown-body a {
+  color: var(--color-brand);
+}
+
+/* Images - responsive */
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+}
