@@ -56,7 +56,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cat > discover.mjs << 'EOF'
-          import fetch from 'node-fetch';
           import fs from 'fs';
 
           const TOKEN = process.env.GH_TOKEN;
