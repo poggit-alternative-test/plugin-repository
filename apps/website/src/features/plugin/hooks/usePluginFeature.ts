@@ -6,13 +6,17 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { getPlugin, getVersion } from '@/services/generated';
+import { getPlugin, getVersion, fetchPluginData } from '@/services/generated';
 import type { Plugin, Version } from '@/services/generated';
 
 export interface PluginFeatureState {
   plugin: Plugin | null;
   version: Version | null;
+  releases: Version[];
+  readme: string | null;
+  dependencies: { depend: string[]; softdepend: string[] };
   loading: boolean;
+  githubLoading: boolean;
   error: Error | null;
   notFound: boolean;
 }
@@ -42,7 +46,11 @@ export function usePluginFeature(
   const [state, setState] = useState<PluginFeatureState>({
     plugin: null,
     version: null,
+    releases: [],
+    readme: null,
+    dependencies: { depend: [], softdepend: [] },
     loading: true,
+    githubLoading: true,
     error: null,
     notFound: false,
   });
@@ -52,7 +60,11 @@ export function usePluginFeature(
       setState({
         plugin: null,
         version: null,
+        releases: [],
+        readme: null,
+        dependencies: { depend: [], softdepend: [] },
         loading: false,
+        githubLoading: false,
         error: null,
         notFound: false,
       });
@@ -62,6 +74,7 @@ export function usePluginFeature(
     setState((prev) => ({
       ...prev,
       loading: true,
+      githubLoading: true,
       error: null,
       notFound: false,
     }));
@@ -71,37 +84,70 @@ export function usePluginFeature(
       const plugin = await getPlugin(pluginId);
 
       if (!plugin) {
-        setState({
+        setState((prev) => ({
+          ...prev,
           plugin: null,
           version: null,
+          releases: [],
+          readme: null,
+          dependencies: { depend: [], softdepend: [] },
           loading: false,
+          githubLoading: false,
           error: null,
           notFound: true,
-        });
+        }));
         return;
       }
 
       // If a specific version is requested, load it
       let versionData: Version | null = null;
       if (version) {
-        versionData = await getVersion(pluginId, version) || null;
+        versionData = (await getVersion(pluginId, version)) || null;
       }
 
-      setState({
+      setState((prev) => ({
+        ...prev,
         plugin,
         version: versionData,
         loading: false,
-        error: null,
-        notFound: false,
-      });
+      }));
+
+      // Fetch GitHub data (releases, README, dependencies)
+      if (plugin.repo) {
+        try {
+          const githubData = await fetchPluginData(plugin.repo);
+          setState((prev) => ({
+            ...prev,
+            releases: githubData.releases,
+            readme: githubData.readme,
+            dependencies: githubData.dependencies,
+            githubLoading: false,
+          }));
+        } catch {
+          setState((prev) => ({
+            ...prev,
+            githubLoading: false,
+          }));
+        }
+      } else {
+        setState((prev) => ({
+          ...prev,
+          githubLoading: false,
+        }));
+      }
     } catch (err) {
-      setState({
+      setState((prev) => ({
+        ...prev,
         plugin: null,
         version: null,
+        releases: [],
+        readme: null,
+        dependencies: { depend: [], softdepend: [] },
         loading: false,
+        githubLoading: false,
         error: err instanceof Error ? err : new Error(String(err)),
         notFound: false,
-      });
+      }));
     }
   }, [pluginId, version]);
 

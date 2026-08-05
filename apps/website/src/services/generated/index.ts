@@ -35,3 +35,11 @@ export {
   filterPlugins,
 } from './search.js';
 export type { PluginFilter, SearchOptions, ScoredSearchResult } from './search.js';
+
+// GitHub API (on-demand data)
+export {
+  fetchReleases,
+  fetchReadme,
+  fetchPluginDependencies,
+  fetchPluginData,
+} from './github.js';

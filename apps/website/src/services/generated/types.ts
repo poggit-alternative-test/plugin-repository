@@ -42,6 +42,8 @@ export interface PluginListItem {
   latestVersion: string;
   status: VersionStatus;
   author: string;
+  repo?: string; // owner/repo format
+  repoUrl?: string; // GitHub URL
   downloads?: number;
   updatedAt: string;
 }
@@ -61,6 +63,9 @@ export interface Plugin {
   name: string;
   summary: string;
   description?: string;
+
+  repo?: string; // owner/repo format
+  repoUrl?: string; // GitHub URL
 
   upstream: {
     repository: string;

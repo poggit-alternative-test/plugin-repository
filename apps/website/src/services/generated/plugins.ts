@@ -5,7 +5,7 @@
  */
 
 import { loadJson, MissingFileError } from './client.js';
-import type { Plugin, PluginList } from './types.js';
+import type { Plugin, PluginList, VersionStatus } from './types.js';
 
 /** Path to the plugin index file */
 const PLUGIN_INDEX_PATH = '/plugins/index.json';
@@ -55,11 +55,42 @@ export async function getPlugins(): Promise<PluginList> {
  */
 export async function getPlugin(id: string): Promise<Plugin | undefined> {
   try {
+    // First try to fetch individual plugin file
     const path = `${PLUGIN_PATH_PREFIX}${id}${PLUGIN_FILE_EXTENSION}`;
     return await loadJson<Plugin>(path);
   } catch {
-    // Plugin not found
-    return undefined;
+    // Fallback: try to find in the index file and convert to full Plugin format
+    try {
+      const pluginList = await getPlugins();
+      const listItem = pluginList.plugins.find(p => p.id === id);
+      if (!listItem) return undefined;
+
+      // Convert PluginListItem to Plugin format with defaults
+      return {
+        id: listItem.id,
+        name: listItem.name,
+        summary: listItem.summary,
+        author: listItem.author,
+        repo: listItem.repo,
+        repoUrl: listItem.repoUrl,
+        status: listItem.status as VersionStatus || 'materialized',
+        latestVersion: listItem.latestVersion,
+        updatedAt: listItem.updatedAt || new Date().toISOString(),
+        createdAt: listItem.updatedAt || new Date().toISOString(),
+        versions: [{ version: listItem.latestVersion, status: listItem.status as VersionStatus || 'materialized', publishedAt: listItem.updatedAt || new Date().toISOString() }],
+        upstream: { repository: listItem.repo || listItem.id, branch: 'main' },
+        latestRelease: listItem.downloads ? {
+          version: listItem.latestVersion,
+          file: '',
+          sha256: '',
+          size: 0,
+          publishedAt: listItem.updatedAt || new Date().toISOString()
+        } : undefined,
+        downloads: listItem.downloads ? { total: listItem.downloads } : undefined,
+      } as Plugin;
+    } catch {
+      return undefined;
+    }
   }
 }
 

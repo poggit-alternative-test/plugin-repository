@@ -358,6 +358,8 @@ jobs:
               latestVersion: p.release?.tag || p.plugin.version || '0.0.0',
               status: p.verification?.is_verified ? 'published' : 'materialized',
               author: p.plugin.author || p.repo.split('/')[0],
+              repo: p.repo, // owner/repo format for API calls
+              repoUrl: p.repo_url, // GitHub URL
               downloads: p.release?.assets?.[0]?.downloads || 0,
               updatedAt: p.last_updated || p.release?.published_at || new Date().toISOString()
             }));
@@ -412,7 +414,7 @@ jobs:
           echo "### Top Plugins" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          cat plugins.json | jq -r '.plugins[0:10] | .[] | "| \(.name) | ⭐ \(.downloads // 0) downloads | \(if .status == "published" then "✅" else "⚠️" end) |"' >> $GITHUB_STEP_SUMMARY
+          cat plugins.json | jq -r '.plugins[0:10] | .[] | "| \(.name) | ⭐ \(.stats.stars) | \(if .status == "published" then "✅" else "⚠️" end) |"' >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push
         run: |
