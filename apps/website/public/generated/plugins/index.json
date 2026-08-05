@@ -1,47 +1,20 @@
-[
-  {
-    "repo": "IvanCraft623/RankSystem",
-    "repo_url": "https://github.com/IvanCraft623/RankSystem",
-    "description": "An amazing Rank and Permissions Manager. The best ranks manager for PocketMine-MP.",
-    "is_fork": false,
-    "parent_repo": null,
-    "plugin": {
+{
+  "plugins": [
+    {
+      "id": "ivancraft623-ranksystem",
       "name": "RankSystem",
-      "version": "1.2.2+dev",
-      "api": "\"5.36.0\"",
+      "summary": "An amazing Rank and Permissions Manager. The best ranks manager for PocketMine-MP.",
+      "latestVersion": "1.2.1",
+      "status": "materialized",
       "author": "IvanCraft623",
-      "main": "IvanCraft623\\RankSystem\\RankSystem"
-    },
-    "stats": {
-      "stars": 47,
-      "forks": 21,
-      "open_issues": 20,
-      "watchers": 2
-    },
-    "release": {
-      "tag": "1.2.1",
-      "name": "RankSystem 1.2.1",
-      "url": "https://github.com/IvanCraft623/RankSystem/releases/tag/1.2.1",
-      "published_at": "2026-07-31T07:08:32Z",
-      "is_draft": false,
-      "is_prerelease": false,
-      "body": "For PocketMine-MP 5.36.0\n\n\n**Full Changelog**: https://github.com/IvanCraft623/RankSystem/compare/1.2.0...1.2.1",
-      "assets": [
-        {
-          "name": "RankSystem.phar",
-          "download_url": "https://github.com/IvanCraft623/RankSystem/releases/download/1.2.1/RankSystem.phar",
-          "size": 200742,
-          "downloads": 5
-        }
-      ]
-    },
-    "verification": {
-      "is_verified": false,
-      "verified_at": null,
-      "workflow_name": null,
-      "workflow_info": "No verified workflow found"
-    },
-    "last_updated": "2026-08-03T16:27:36Z",
-    "created_at": "2021-07-11T19:13:38Z"
+      "downloads": 5,
+      "updatedAt": "2026-08-03T16:27:36Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "perPage": 20,
+    "total": 1,
+    "totalPages": 1
   }
-]
+}
