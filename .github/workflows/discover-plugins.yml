@@ -350,8 +350,29 @@ jobs:
             console.log(`✅ Final plugins: ${plugins.length}`);
             console.log(`🔐 Verified: ${verifiedCount}`);
 
-            // Save to JSON
-            fs.writeFileSync('plugins.json', JSON.stringify(plugins, null, 2));
+            // Transform to PluginListItem format
+            const pluginListItems = plugins.map((p, index) => ({
+              id: p.repo.toLowerCase().replace(/\//g, '-'),
+              name: p.plugin.name,
+              summary: p.description || '',
+              latestVersion: p.release?.tag || p.plugin.version || '0.0.0',
+              status: p.verification?.is_verified ? 'published' : 'materialized',
+              author: p.plugin.author || p.repo.split('/')[0],
+              downloads: p.release?.assets?.[0]?.downloads || 0,
+              updatedAt: p.last_updated || p.release?.published_at || new Date().toISOString()
+            }));
+
+            // Save to JSON with correct PluginList structure
+            const output = {
+              plugins: pluginListItems,
+              pagination: {
+                page: 1,
+                perPage: 20,
+                total: pluginListItems.length,
+                totalPages: Math.ceil(pluginListItems.length / 20)
+              }
+            };
+            fs.writeFileSync('plugins.json', JSON.stringify(output, null, 2));
 
             // Output for GitHub Actions
             fs.writeFileSync('plugin_count.txt', String(plugins.length));
