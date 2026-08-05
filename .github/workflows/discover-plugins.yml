@@ -412,7 +412,7 @@ jobs:
           echo "### Top Plugins" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          cat plugins.json | jq -r '.[0:10] | .[] | "| \(.plugin.name) | ⭐ \(.stats.stars) | \(if .verification.is_verified then "✅" else "⚠️" end) |"' >> $GITHUB_STEP_SUMMARY
+          cat plugins.json | jq -r '.plugins[0:10] | .[] | "| \(.name) | ⭐ \(.downloads // 0) downloads | \(if .status == "published" then "✅" else "⚠️" end) |"' >> $GITHUB_STEP_SUMMARY
 
       - name: Commit and push
         run: |
