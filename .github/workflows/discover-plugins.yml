@@ -368,8 +368,7 @@ jobs:
           echo "FORCE_REFRESH=${{ inputs.force_refresh }}" >> $GITHUB_ENV
           node discover.mjs
 
-      - name: Set outputs
-        run: |
+          # Set outputs for downstream jobs
           echo "plugin_count=$(cat plugin_count.txt)" >> $GITHUB_OUTPUT
           echo "verified_count=$(cat verified_count.txt)" >> $GITHUB_OUTPUT
           echo "skipped_count=$(cat skipped_count.txt)" >> $GITHUB_OUTPUT
