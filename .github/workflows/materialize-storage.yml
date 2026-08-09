@@ -339,39 +339,19 @@ jobs:
           echo ""
 
           # Run the materialize CLI to execute
-          RESULT_JSON=$(npm run materialize -- execute \
+          npm run materialize -- execute \
             --plugin-slug "$PLUGIN_SLUG" \
             --repository "$REPO" \
             --sha "$SHA" \
-            --version "$VERSION" 2>&1)
-
+            --version "$VERSION"
           EXIT_CODE=$?
 
-          echo "Materialization result:"
-          echo "$RESULT_JSON" | jq '.'
-
-          echo "result_json<<EOF" >> $GITHUB_OUTPUT
-          echo "$RESULT_JSON" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "Execute materialize exit code: $EXIT_CODE"
 
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "::error::Materialization failed with exit code $EXIT_CODE"
+            echo "::error::Execute materialization failed with exit code $EXIT_CODE"
             exit $EXIT_CODE
           fi
-
-          # Check for failures in the result
-          SUCCESS=$(echo "$RESULT_JSON" | jq -r '.success')
-          if [ "$SUCCESS" != "true" ]; then
-            echo "::error::Materialization reported failure"
-            exit 1
-          fi
-
-          ALREADY=$(echo "$RESULT_JSON" | jq -r '.alreadyMaterialized')
-          if [ "$ALREADY" == "true" ]; then
-            echo "::notice::Repository already materialized for this exact source"
-          fi
-
-          echo "Materialization completed successfully"
 
       - name: Upload execution result artifact
         uses: actions/upload-artifact@v4
