@@ -230,7 +230,7 @@ export function loadTesterConfigFromEnv(): TesterTransportConfig {
   const privateKeyContent = process.env.M5_GITHUB_APP_PRIVATE_KEY;
 
   // Check for direct access token (for testing with PAT)
-  const accessToken = process.env.GITHUB_TOKEN || process.env.M5_ACCESS_TOKEN;
+  const accessToken = process.env.MAT_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.M5_ACCESS_TOKEN;
 
   // Safe JSON parse for installation ID mapping
   let installationIdByOrg: Record<string, string> | undefined;

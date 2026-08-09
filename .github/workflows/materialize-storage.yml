@@ -193,8 +193,8 @@ jobs:
       - name: Generate materialization plan
         id: plan
         env:
-          # GitHub Token from secrets
-          GITHUB_TOKEN: ${{ secrets.PUB_GITHUB_TOKEN }}
+          # GitHub Token from secrets (use different name to avoid conflict with GITHUB_TOKEN)
+          MAT_GITHUB_TOKEN: ${{ secrets.PUB_GITHUB_TOKEN }}
 
           # M4 configuration
           MAT_M4_REVIEWS_DIR: ${{ github.workspace }}/reviews
