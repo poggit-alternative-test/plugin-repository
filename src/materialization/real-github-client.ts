@@ -610,7 +610,7 @@ export class RealGitHubClientImpl implements GitHubClient {
     // Create repository via API
     const result = await this.request<{
       full_name: string;
-    }>('POST', '/user/repos', {
+    }>('POST', `/orgs/${encodeURIComponent(owner)}/repos`, {
       body: {
         name: options.name,
         description: options.description,
