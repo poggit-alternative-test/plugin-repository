@@ -309,8 +309,8 @@ jobs:
       - name: Execute materialization
         id: execute
         env:
-          # GitHub Token from secrets
-          GITHUB_TOKEN: ${{ secrets.PUB_GITHUB_TOKEN }}
+          # GitHub Token from secrets (use MAT_GITHUB_TOKEN for materialize CLI)
+          MAT_GITHUB_TOKEN: ${{ secrets.PUB_GITHUB_TOKEN }}
 
           # M4 configuration
           MAT_M4_REVIEWS_DIR: ${{ github.workspace }}/reviews
