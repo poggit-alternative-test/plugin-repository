@@ -112,11 +112,15 @@ function createServiceWithClient(githubClient: RealGitHubClient) {
   }
 
   if (!existsSync(reviewersPath)) fail(`Reviewer authorization configuration not found: ${reviewersPath}`);
+  console.error('[DEBUG] Parsing reviewers from:', reviewersPath);
   const parsed = parse(readFileSync(reviewersPath, 'utf-8')) as { authorizedReviewers?: Array<{ githubId?: number }> };
+  console.error('[DEBUG] Parsed reviewers:', JSON.stringify(parsed));
   const reviewerIds = (parsed.authorizedReviewers ?? []).flatMap((reviewer) => {
     const id = reviewer.githubId;
+    console.error('[DEBUG] Reviewer ID:', id, typeof id);
     return typeof id === 'number' && Number.isInteger(id) && id > 0 ? [id] : [];
   });
+  console.error('[DEBUG] Final reviewerIds:', reviewerIds);
   if (reviewerIds.length === 0) fail('Trusted reviewer configuration has no authorized numeric GitHub IDs.');
 
   return createMaterializationService({

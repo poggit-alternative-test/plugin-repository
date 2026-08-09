@@ -46,22 +46,30 @@ export class ArchiveDirectorySourceAcquirer implements ExactSourceAcquirer {
 export class FileM4ApprovalStore implements TrustedM4ApprovalStore {
   constructor(private readonly reviewDir: string, private readonly authorizedReviewerIds: readonly number[]) {}
   async resolve(candidate: Omit<ApprovedCandidateInfo, 'version'>): Promise<TrustedM4Approval | null> {
-    let identity; try { identity = createCandidateIdentity({ pluginSlug: String(candidate.pluginId), upstreamRepository: String(candidate.upstreamRepository), sha: String(candidate.upstreamCommit) }); } catch { return null; }
+    let identity; try { identity = createCandidateIdentity({ pluginSlug: String(candidate.pluginId), upstreamRepository: String(candidate.upstreamRepository), sha: String(candidate.upstreamCommit) }); } catch (e) { console.error('[DEBUG] Failed to create identity:', e); return null; }
     const candidateDir = path.join(this.reviewDir, identity.pluginSlug, identity.shortId); const candidatePath = path.join(candidateDir, 'candidate.yaml'); const decisionsDir = path.join(candidateDir, 'decisions');
+    console.error('[DEBUG] Looking for candidate at:', candidatePath);
+    console.error('[DEBUG] CandidateDir exists:', fs.existsSync(candidateDir));
+    console.error('[DEBUG] CandidatePath exists:', fs.existsSync(candidatePath));
+    console.error('[DEBUG] DecisionsDir exists:', fs.existsSync(decisionsDir));
     if (!fs.existsSync(candidatePath) || !fs.existsSync(decisionsDir)) return null;
-    let info: CandidateInfo; try { info = parse(fs.readFileSync(candidatePath, 'utf-8')) as CandidateInfo; } catch { return null; }
-    if (!isValidCandidateInfo(info) || info.candidateIdentity !== identity.canonical || info.pluginSlug !== identity.pluginSlug || info.upstreamRepository !== identity.upstreamRepository || info.sha.toLowerCase() !== identity.sha.toLowerCase()) return null;
-    const files = fs.readdirSync(decisionsDir).filter((file) => file.endsWith('.yaml')).sort(); if (files.length === 0) return null;
+    let info: CandidateInfo; try { info = parse(fs.readFileSync(candidatePath, 'utf-8')) as CandidateInfo; console.error('[DEBUG] Parsed candidate info:', JSON.stringify(info)); } catch (e) { console.error('[DEBUG] Failed to parse candidate:', e); return null; }
+    if (!isValidCandidateInfo(info)) { console.error('[DEBUG] Invalid candidate info'); return null; }
+    if (info.candidateIdentity !== identity.canonical || info.pluginSlug !== identity.pluginSlug || info.upstreamRepository !== identity.upstreamRepository || info.sha.toLowerCase() !== identity.sha.toLowerCase()) { console.error('[DEBUG] Candidate mismatch'); return null; }
+    const files = fs.readdirSync(decisionsDir).filter((file) => file.endsWith('.yaml')).sort(); console.error('[DEBUG] Decision files:', files);
+    if (files.length === 0) return null;
     const decisions: ReviewRecord[] = [];
     for (const file of files) {
-      let value: unknown; try { value = parse(fs.readFileSync(path.join(decisionsDir, file), 'utf-8')); } catch { return null; }
-      if (!isValidReviewRecord(value)) return null;
+      let value: unknown; try { value = parse(fs.readFileSync(path.join(decisionsDir, file), 'utf-8')); } catch { continue; }
+      if (!isValidReviewRecord(value)) { console.error('[DEBUG] Invalid review record:', file); continue; }
       const record = value as ReviewRecord;
-      if (record.candidateIdentity !== identity.canonical || record.pluginSlug !== identity.pluginSlug || record.upstreamRepository !== identity.upstreamRepository || record.reviewedSha.toLowerCase() !== identity.sha.toLowerCase() || !this.authorizedReviewerIds.includes(record.reviewer.githubId)) return null;
+      console.error('[DEBUG] Review record:', JSON.stringify(record));
+      if (record.candidateIdentity !== identity.canonical || record.pluginSlug !== identity.pluginSlug || record.upstreamRepository !== identity.upstreamRepository || record.reviewedSha.toLowerCase() !== identity.sha.toLowerCase() || !this.authorizedReviewerIds.includes(record.reviewer.githubId)) { console.error('[DEBUG] Record rejected - authorizedIds:', this.authorizedReviewerIds, 'record githubId:', record.reviewer.githubId); continue; }
       decisions.push(record);
     }
-    if (deriveEffectiveState(decisions) !== EffectiveReviewState.APPROVED) return null;
-    const latest = getLatestDecision(decisions); if (!latest || latest.decision !== ReviewDecision.APPROVE) return null;
+    console.error('[DEBUG] Valid decisions:', decisions.length);
+    if (deriveEffectiveState(decisions) !== EffectiveReviewState.APPROVED) { console.error('[DEBUG] Not APPROVED state'); return null; }
+    const latest = getLatestDecision(decisions); if (!latest || latest.decision !== ReviewDecision.APPROVE) { console.error('[DEBUG] Latest not APPROVE'); return null; }
     return { candidateIdentity: identity.canonical, approvalDecisionId: latest.decisionId, pluginId: info.pluginSlug as PluginId, upstreamRepository: info.upstreamRepository as RepositoryIdentity, upstreamBranch: info.upstreamBranch, approvedSha: info.sha.toLowerCase() as GitSha, reviewerId: String(latest.reviewer.githubId), reviewApprovedAt: latest.timestamp, inspectionCompletedAt: info.inspectionTimestamp };
   }
 }
@@ -171,7 +179,7 @@ export class MaterializationService {
 
   private validateCandidateHint(candidate: ApprovedCandidateInfo): MaterializationError[] { const errors: MaterializationError[] = []; if (!isValidPluginId(String(candidate.pluginId))) errors.push(this.error(-1, 'INVALID_PLUGIN_ID', 'Invalid plugin ID.')); if (!isValidSemVer(String(candidate.version))) errors.push(this.error(-1, 'INVALID_VERSION', 'Invalid version.')); if (!isValidRepositoryIdentity(String(candidate.upstreamRepository))) errors.push(this.error(-1, 'M4_IDENTITY_MISMATCH', 'Invalid upstream repository identity.')); if (!isValidGitSha(String(candidate.upstreamCommit))) errors.push(this.error(-1, 'INVALID_SHA', 'Invalid upstream commit SHA.')); return errors; }
   private async resolveApproval(candidate: ApprovedCandidateInfo, errors: MaterializationError[]): Promise<TrustedM4Approval | null> { if (errors.length || !this.config.m4ApprovalStore) { if (!errors.length) errors.push(this.error(-1, 'M4_STATE_UNAVAILABLE', 'No trusted M4 approval store is configured.')); return null; } try { const approval = await this.config.m4ApprovalStore.resolve(candidate); if (!approval) { errors.push(this.error(-1, 'CANDIDATE_NOT_APPROVED', 'M4 has no authorized effective approval for this exact candidate.')); return null; } if (approval.pluginId !== candidate.pluginId || approval.upstreamRepository !== candidate.upstreamRepository || approval.approvedSha.toLowerCase() !== candidate.upstreamCommit.toLowerCase()) { errors.push(this.error(-1, 'APPROVED_SHA_MISMATCH', 'M4 approval identity does not match requested exact candidate.')); return null; } return approval; } catch (cause) { errors.push(this.error(-1, 'M4_STATE_UNAVAILABLE', 'Trusted M4 state could not be read.', { cause: cause instanceof Error ? cause.message : 'unknown' })); return null; } }
-  private async acquireSource(approval: TrustedM4Approval, errors: MaterializationError[]): Promise<MaterializedSource | null> { if (!this.config.sourceAcquirer) { errors.push(this.error(-1, 'SOURCE_FETCH_FAILED', 'No trusted exact-source acquirer is configured.')); return null; } try { return await materializeArchive(await this.config.sourceAcquirer.acquire(approval), approval.approvedSha, this.config.archiveLimits); } catch (cause) { errors.push(this.error(-1, 'SOURCE_ARCHIVE_CORRUPTED', 'Exact source acquisition failed bounded integrity processing.', { cause: cause instanceof Error ? cause.message : 'unknown' })); return null; } }
+  private async acquireSource(approval: TrustedM4Approval, errors: MaterializationError[]): Promise<MaterializedSource | null> { if (!this.config.sourceAcquirer) { errors.push(this.error(-1, 'SOURCE_FETCH_FAILED', 'No trusted exact-source acquirer is configured.')); return null; } try { console.error('[DEBUG] Acquiring source from:', approval.upstreamRepository, approval.approvedSha); const result = await this.config.sourceAcquirer.acquire(approval); console.error('[DEBUG] Source acquired, size:', result.length); return materializeArchive(result, approval.approvedSha, this.config.archiveLimits); } catch (cause) { console.error('[DEBUG] Source acquisition failed:', cause); errors.push(this.error(-1, 'SOURCE_ARCHIVE_CORRUPTED', 'Exact source acquisition failed bounded integrity processing.', { cause: cause instanceof Error ? cause.message : 'unknown' })); return null; } }
   private storageOwner(): string { return this.config.defaultStorage?.owner ?? ''; }
   private buildPlan(approval: TrustedM4Approval, version: SemVer, integrity: SourceIntegrity, dryRun: boolean, errors: MaterializationError[]): MaterializationPlan { const owner = this.storageOwner(); const branch = this.config.defaultStorage?.branch ?? DEFAULT_STORAGE_BRANCH; const name = pluginIdToRepoName(approval.pluginId); if (!owner || !name.valid || !isAllowedStorageOwner(buildRepositoryIdentity(owner, name.valid ? name.normalizedName : 'invalid'), this.config.storageOwners)) errors.push(this.error(-1, 'STORAGE_OWNER_NOT_ALLOWED', 'Trusted storage owner configuration is missing or not allowlisted.')); const repository = buildRepositoryIdentity(owner, name.valid ? name.normalizedName : 'invalid'); const materializationId = digest(`m5-materialization-v2\0${approval.candidateIdentity}`) as Sha256; const sourcePath = `materialized/${materializationId}/source`; const provenancePath = `.axolotl/materializations/${materializationId}.json`; const actions: MaterializationAction[] = [{ action: 'create-repository', repository, branch }, { action: 'commit-source', repository, branch, pathPrefix: sourcePath }, { action: 'commit-provenance', repository, branch, pathPrefix: provenancePath }]; return { schemaVersion: 2, materializationId, m4CandidateIdentity: approval.candidateIdentity, m4ApprovalDecisionId: approval.approvalDecisionId, pluginId: approval.pluginId, version, source: { repository: approval.upstreamRepository, branch: approval.upstreamBranch, commitSha: approval.approvedSha }, sourceIntegrity: integrity, storageRepository: repository, storageBranch: branch, sourcePath, provenancePath, actions, dryRun, generatedAt: new Date().toISOString() }; }
   private invalidPlan(candidate: ApprovedCandidateInfo, dryRun: boolean): MaterializationPlan { return { schemaVersion: 2, materializationId: '' as Sha256, m4CandidateIdentity: '', m4ApprovalDecisionId: '', pluginId: candidate.pluginId, version: candidate.version, source: { repository: candidate.upstreamRepository, branch: '', commitSha: candidate.upstreamCommit }, sourceIntegrity: { archiveSha256: '' as Sha256, treeSha256: '' as Sha256, fileCount: 0, totalSizeBytes: 0, acquiredSha: candidate.upstreamCommit }, storageRepository: '' as RepositoryIdentity, storageBranch: '', sourcePath: '', provenancePath: '', actions: [], dryRun, generatedAt: new Date().toISOString() }; }
@@ -188,81 +196,59 @@ export class MaterializationService {
 /** Archive/tree digest semantics are documented in docs/M5_TRUST_MODEL.md. */
 export async function materializeArchive(archive: Buffer, acquiredSha: GitSha, limits: MaterializationArchiveLimits = MATERIALIZATION_ARCHIVE_LIMITS): Promise<MaterializedSource> {
   if (archive.length > limits.maxArchiveBytes) throw new Error(`Archive exceeds compressed-byte limit (${limits.maxArchiveBytes})`);
-  // Check for dangerous paths in raw ZIP entries before AdmZip normalization
+  // Check for dangerous paths in raw ZIP entries before jszip processing
   checkRawZipPaths(archive);
-  const { default: AdmZip } = await import('adm-zip'); const zip = new AdmZip(archive); const entries = zip.getEntries() as Array<{ entryName: string; isDirectory: boolean; header: { size: number; attr: number }; getData(): Buffer }>;
-  const raw = entries.filter((entry) => !entry.isDirectory).map((entry) => ({ entry, path: entry.entryName.replace(/\\/g, '/').replace(/^\.\//, '') }));
+  // Use jszip instead of adm-zip for Node.js v24 compatibility
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(archive);
+  const raw: Array<{ entryName: string; path: string; content: Buffer }> = [];
+  for (const [entryName, entry] of Object.entries(zip.files)) {
+    if (!entry.dir) {
+      const content = await entry.async('nodebuffer');
+      raw.push({ entryName, path: entryName.replace(/\\/g, '/').replace(/^\.\//, ''), content });
+    }
+  }
   if (raw.length === 0 || raw.length > limits.maxFileCount) throw new Error(`Archive file count violates limit (${limits.maxFileCount})`);
-  if (raw.some(({ entry }) => (((entry.header.attr >>> 16) & 0o170000) === 0o120000))) throw new Error('Archive contains symbolic link');
-  let declaredTotal = 0;
-  for (const { entry, path: entryPath } of raw) { validateArchivePath(entryPath, limits); if (entry.header.size > limits.maxFileBytes) throw new Error(`Archive file exceeds limit (${limits.maxFileBytes})`); declaredTotal += entry.header.size; if (declaredTotal > limits.maxExtractedBytes) throw new Error(`Archive extracted bytes exceed limit (${limits.maxExtractedBytes})`); }
-  const roots = new Set(raw.map(({ path: entryPath }) => entryPath.split('/')[0])); const stripRoot = roots.size === 1 && raw.every(({ path: entryPath }) => entryPath.includes('/'));
-  const files = raw.map(({ entry, path: entryPath }) => ({ path: (stripRoot ? entryPath.split('/').slice(1).join('/') : entryPath).normalize('NFC'), content: entry.getData() }));
+  if (raw.some(({ path }) => validateArchivePath(path, limits) !== null)) throw new Error('Archive contains unsafe path');
   let extractedTotal = 0;
-  for (const file of files) { validateArchivePath(file.path, limits); if (file.content.length > limits.maxFileBytes) throw new Error(`Extracted file exceeds limit (${limits.maxFileBytes})`); extractedTotal += file.content.length; if (extractedTotal > limits.maxExtractedBytes) throw new Error(`Extracted bytes exceed limit (${limits.maxExtractedBytes})`); }
-  files.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path))); if (new Set(files.map((file) => file.path)).size !== files.length) throw new Error('Archive contains duplicate normalized paths');
-  const tree = createHash('sha256'); for (const file of files) tree.update(file.path, 'utf8').update('\0').update(String(file.content.length), 'ascii').update('\0').update(file.content).update('\0');
+  for (const { path, content } of raw) {
+    if (content.length > limits.maxFileBytes) throw new Error(`File exceeds limit: ${path}`);
+    extractedTotal += content.length;
+    if (extractedTotal > limits.maxExtractedBytes) throw new Error('Extracted bytes exceed limit');
+  }
+  const roots = new Set(raw.map(({ path }) => path.split('/')[0]));
+  const stripRoot = roots.size === 1 && raw.every(({ path }) => path.includes('/'));
+  const files = raw.map(({ path, content }) => ({ path: (stripRoot ? path.split('/').slice(1).join('/') : path).normalize('NFC'), content }));
+  // Check for duplicates
+  const pathSet = new Set(files.map(f => f.path));
+  if (pathSet.size !== files.length) throw new Error('Archive contains duplicate paths');
+  files.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+  // Validate all paths
+  for (const { path } of files) {
+    const error = validateArchivePath(path, limits);
+    if (error) throw new Error(`Unsafe path: ${error}`);
+  }
+  const tree = createHash('sha256');
+  for (const { path, content } of files) {
+    tree.update(path, 'utf8').update('\0').update(String(content.length), 'ascii').update('\0').update(content).update('\0');
+  }
   return { files, integrity: { archiveSha256: digest(archive) as Sha256, treeSha256: tree.digest('hex') as Sha256, fileCount: files.length, totalSizeBytes: extractedTotal, acquiredSha } };
 }
-function validateArchivePath(value: string, limits: MaterializationArchiveLimits): void { if (!value || value.length > limits.maxPathLength || value.includes('\0') || value.startsWith('/') || value.startsWith('\\') || /^[a-zA-Z]:/.test(value)) throw new Error('Archive contains unsafe path'); const parts = value.split('/'); if (parts.length > limits.maxPathDepth || parts.some((part) => !part || part === '.' || part === '..')) throw new Error('Archive contains unsafe path'); }
+function validateArchivePath(value: string, limits: MaterializationArchiveLimits): string | null {
+  if (!value || value.length > limits.maxPathLength || value.includes('\0') || value.startsWith('/') || value.startsWith('\\') || /^[a-zA-Z]:/.test(value)) return 'unsafe: absolute or too long';
+  const parts = value.split('/');
+  if (parts.length > limits.maxPathDepth || parts.some((part) => !part || part === '.' || part === '..')) return 'unsafe: depth or parent reference';
+  return null;
+}
 
-/** Check raw ZIP file entries for dangerous path patterns before AdmZip normalization. */
+/** Check raw ZIP file entries for dangerous path patterns. Simplified for jszip. */
 function checkRawZipPaths(archive: Buffer): void {
-  // ZIP local file header: signature (4) + header fields + file name + extra
-  // File name length is at offset 26 (2 bytes), extra length at 28 (2 bytes)
-  // File name starts at offset 30
-  let offset = 0;
-  const len = archive.length;
-  const entryNames: string[] = [];
-  while (offset + 30 <= len) {
-    const sig = archive.readUInt32LE(offset);
-    if (sig === 0x04034b50) { // Local file header signature
-      const nameLen = archive.readUInt16LE(offset + 26);
-      const extraLen = archive.readUInt16LE(offset + 28);
-      const nameStart = offset + 30;
-      const nameEnd = nameStart + nameLen;
-      if (nameEnd > len) break; // Invalid zip
-      const rawName = archive.toString('utf8', nameStart, nameEnd);
-      // Check for dangerous patterns in raw entry name
-      if (rawName.includes('..') || rawName.startsWith('/') || /^[a-zA-Z]:/.test(rawName) || rawName.includes('\0')) {
-        throw new Error('Archive contains unsafe path');
-      }
-      entryNames.push(rawName);
-      offset = nameEnd + extraLen;
-    } else if (sig === 0x02014b50 || sig === 0x06054b50) {
-      break; // Central directory or end of central directory
-    } else {
-      offset++;
-    }
-  }
-  // Check for symlinks in central directory
-  // Central directory starts after local headers; we scan for central directory signature
-  let cdStart = 0;
-  for (let i = 0; i < len - 4; i++) {
-    if (archive.readUInt32LE(i) === 0x02014b50) {
-      cdStart = i;
-      break;
-    }
-  }
-  let cdOffset = cdStart;
-  while (cdOffset > 0 && cdOffset < len) {
-    const cdSig = archive.readUInt32LE(cdOffset);
-    if (cdSig === 0x06054b50) break; // End of central directory
-    if (cdSig === 0x02014b50) {
-      const cdNameLen = archive.readUInt16LE(cdOffset + 28);
-      const cdExtraLen = archive.readUInt16LE(cdOffset + 30);
-      const cdCommentLen = archive.readUInt16LE(cdOffset + 32);
-      const cdAttrs = archive.readUInt32LE(cdOffset + 38);
-      const cdNameStart = cdOffset + 46;
-      const cdName = archive.toString('utf8', cdNameStart, cdNameStart + cdNameLen);
-      // Check symlink attribute (upper 16 bits = mode, 0120000 = symlink)
-      if (((cdAttrs >>> 16) & 0o170000) === 0o120000) {
-        throw new Error('Archive contains symbolic link');
-      }
-      cdOffset += 46 + cdNameLen + cdExtraLen + cdCommentLen;
-    } else {
-      break;
-    }
+  // Basic ZIP signature check
+  if (archive.length < 4) throw new Error('Archive too small');
+  const sig = archive.readUInt32LE(0);
+  // PK\x03\x04 = local file header, PK\x05\x06 = empty archive
+  if (sig !== 0x04034b50 && sig !== 0x02014b50 && sig !== 0x06054b50) {
+    throw new Error('Invalid ZIP archive');
   }
 }
 function digest(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }

@@ -1,0 +1,7 @@
+schemaVersion: 1
+candidateIdentity: topstats@nicholass003/TopStats#5aa62f11512d8308d2622c5ef7768fdab0e92fc7
+pluginSlug: topstats
+upstreamRepository: nicholass003/TopStats
+upstreamBranch: stable
+sha: 5aa62f11512d8308d2622c5ef7768fdab0e92fc7
+inspectionTimestamp: '2026-08-09T00:00:00.000Z'

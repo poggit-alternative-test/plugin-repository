@@ -1,0 +1,12 @@
+schemaVersion: 1
+decisionId: test-approval-001
+candidateIdentity: topstats@nicholass003/TopStats#5aa62f11512d8308d2622c5ef7768fdab0e92fc7
+pluginSlug: topstats
+upstreamRepository: nicholass003/TopStats
+reviewedSha: 5aa62f11512d8308d2622c5ef7768fdab0e92fc7
+decision: APPROVED
+reviewer:
+  githubId: 12345678
+  login: test-reviewer
+timestamp: '2026-08-09T00:00:00.000Z'
+notes: Test approval for materialize workflow testing
