@@ -223,20 +223,28 @@ jobs:
           mkdir -p "$MAT_M4_REVIEWS_DIR"
 
           echo "Running materialize..."
-          PLAN_JSON=$(npm run materialize -- plan \
+          set -x  # Enable debug mode
+          npm run materialize -- plan \
             --plugin-slug "$PLUGIN_SLUG" \
             --repository "$REPO" \
             --sha "$SHA" \
-            --version "$VERSION" 2>&1)
-
+            --version "$VERSION" > /tmp/plan_output.txt 2>&1
           EXIT_CODE=$?
+          set +x  # Disable debug mode
+
           echo "Materialize exit code: $EXIT_CODE"
+          echo "--- Plan output ---"
+          cat /tmp/plan_output.txt
+          echo "--- End output ---"
 
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "Plan generation failed:"
-            echo "$PLAN_JSON"
+            PLAN_JSON=$(cat /tmp/plan_output.txt)
+            echo "::error::Plan generation failed with exit code $EXIT_CODE"
+            echo "::error::Output: $PLAN_JSON"
             exit 1
           fi
+
+          PLAN_JSON=$(cat /tmp/plan_output.txt)
 
           echo "Plan generated successfully"
           echo "$PLAN_JSON" | jq '.'
