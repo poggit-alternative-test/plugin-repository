@@ -175,6 +175,16 @@ async function execute(): Promise<void> {
   // Execute the plan
   const result = await service.executePlan(planResult.plan, githubClient, context, { dryRun });
 
+  // Debug: Log error details
+  if (result.errors.length > 0) {
+    for (const error of result.errors) {
+      console.error(`[DEBUG] Action ${error.actionIndex}: ${error.code} - ${error.message}`);
+      if (error.details) {
+        console.error(`[DEBUG] Details:`, JSON.stringify(error.details));
+      }
+    }
+  }
+
   console.log(JSON.stringify({
     success: result.success,
     alreadyMaterialized: result.alreadyMaterialized,
