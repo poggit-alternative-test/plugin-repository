@@ -320,10 +320,10 @@ export function validateTesterConfig(config: TesterTransportConfig): {
     errors.push('Production organizations are not allowed in tester mode.');
   }
 
-  // If repo creation is allowed, require GitHub App config
+  // If repo creation is allowed, require GitHub App config OR access token
   if (config.allowRepositoryCreation) {
-    if (!config.githubAppConfig?.appId) {
-      errors.push('Repository creation requires GitHub App configuration (M5_GITHUB_APP_ID).');
+    if (!config.githubAppConfig?.appId && !config.testOverrides?.accessToken) {
+      errors.push('Repository creation requires GitHub App (M5_GITHUB_APP_ID) or GitHub Token (GITHUB_TOKEN/MAT_GITHUB_TOKEN).');
     }
   }
 
