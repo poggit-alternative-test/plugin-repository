@@ -300,22 +300,18 @@ export class RealGitHubClientImpl implements GitHubClient {
         this.requestCount++;
         this.lastRequestTime = Date.now();
 
-        // Parse error response for rate limit checking
-        let errorData: Record<string, unknown> = {};
-        let errorMessage: string | null = null;
-        try {
-          errorData = await response.json() as Record<string, unknown>;
-          errorMessage = extractErrorMessage(errorData);
-        } catch {
-          // Ignore JSON parse errors
-        }
-
-        // Handle 403: distinguish between rate limits and permission denied
+        // Handle 403 BEFORE reading body (need body for rate limit check)
         if (response.status === 403) {
+          let errorData: Record<string, unknown> = {};
+          let errorMessage: string | null = null;
+          try {
+            errorData = await response.json() as Record<string, unknown>;
+            errorMessage = extractErrorMessage(errorData);
+          } catch {}
+
           const rateLimitCheck = checkGitHubRateLimit(response, errorMessage);
 
           if (rateLimitCheck.category !== 'none' && attempt < retries) {
-            // This is a rate limit - retry with backoff
             const retryAfterMs = rateLimitCheck.retryAfterMs ?? this.calculateBackoff(attempt);
             lastError = createGitHubError(
               'GITHUB_RATE_LIMITED',
@@ -327,7 +323,6 @@ export class RealGitHubClientImpl implements GitHubClient {
             continue;
           }
 
-          // Permission denied or other 403 - do not retry
           return {
             ok: false,
             status: 403,
@@ -341,7 +336,7 @@ export class RealGitHubClientImpl implements GitHubClient {
           };
         }
 
-        // Handle specific status codes
+        // Handle OK responses (body can only be read once!)
         if (response.ok) {
           if (response.status === 204 || options.acceptEmptyBody) {
             return { ok: true, status: response.status, data: null, error: null };
@@ -350,7 +345,14 @@ export class RealGitHubClientImpl implements GitHubClient {
           return { ok: true, status: response.status, data, error: null };
         }
 
+        // Handle error responses (read body for error info)
         const statusCode = response.status;
+        let errorData: Record<string, unknown> = {};
+        let errorMessage: string | null = null;
+        try {
+          errorData = await response.json() as Record<string, unknown>;
+          errorMessage = extractErrorMessage(errorData);
+        } catch {}
 
         // Check if error is transient and we should retry
         if (isTransientError(statusCode) && attempt < retries) {
