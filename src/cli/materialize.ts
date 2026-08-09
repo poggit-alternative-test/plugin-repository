@@ -14,7 +14,7 @@
  * - plan: Generate a materialization plan (read-only preview)
  * - execute: Execute a materialization plan (requires write-enabled transport)
  */
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'yaml';
 import {
@@ -105,6 +105,11 @@ function createServiceWithClient(githubClient: RealGitHubClient) {
   const reviewDir = process.env.MAT_M4_REVIEWS_DIR || fail('Missing required trusted configuration: MAT_M4_REVIEWS_DIR');
   const owner = process.env.MAT_STORAGE_OWNER || fail('Missing required trusted configuration: MAT_STORAGE_OWNER');
   const reviewersPath = process.env.MAT_REVIEWERS_CONFIG || fail('Missing required trusted configuration: MAT_REVIEWERS_CONFIG');
+
+  // Create reviews directory if it doesn't exist (for test mode)
+  if (!existsSync(reviewDir)) {
+    mkdirSync(reviewDir, { recursive: true });
+  }
 
   if (!existsSync(reviewersPath)) fail(`Reviewer authorization configuration not found: ${reviewersPath}`);
   const parsed = parse(readFileSync(reviewersPath, 'utf-8')) as { authorizedReviewers?: Array<{ githubId?: number }> };

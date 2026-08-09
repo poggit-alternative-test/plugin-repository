@@ -219,13 +219,20 @@ jobs:
           echo "Dry Run: $DRY_RUN"
 
           # Run the materialize CLI to generate plan
+          echo "Creating reviews directory for test..."
+          mkdir -p "$MAT_M4_REVIEWS_DIR"
+
+          echo "Running materialize..."
           PLAN_JSON=$(npm run materialize -- plan \
             --plugin-slug "$PLUGIN_SLUG" \
             --repository "$REPO" \
             --sha "$SHA" \
             --version "$VERSION" 2>&1)
 
-          if [ $? -ne 0 ]; then
+          EXIT_CODE=$?
+          echo "Materialize exit code: $EXIT_CODE"
+
+          if [ $EXIT_CODE -ne 0 ]; then
             echo "Plan generation failed:"
             echo "$PLAN_JSON"
             exit 1
