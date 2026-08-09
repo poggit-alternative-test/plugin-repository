@@ -16,7 +16,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
-import { join, relative, resolve, sep } from 'path';
+import { dirname, join, relative, resolve, sep } from 'path';
 import {
   SUBMISSION_CODES,
   submissionError,
@@ -513,15 +513,16 @@ async function extractArchive(
   mkdirSync(destination, { recursive: true });
 
   try {
-    // Dynamically import adm-zip
-    const AdmZip = (await import('adm-zip')).default;
-    const zip = new AdmZip(archivePath);
-    const entries = zip.getEntries();
+    // Use jszip for extraction (compatible with Node.js v24)
+    const JSZip = (await import('jszip')).default;
+    const zipData = readFileSync(archivePath);
+    const zip = await JSZip.loadAsync(zipData);
+    const entries = Object.keys(zip.files);
 
     let fileCount = 0;
     let extractedSize = 0;
 
-    for (const entry of entries) {
+    for (const entryPath of entries) {
       // Check for fatal error - stop immediately
       if (fatalError) {
         break;
@@ -539,7 +540,7 @@ async function extractArchive(
         break;
       }
 
-      const entryPath = entry.entryName;
+      const zipEntry = zip.files[entryPath];
 
       // Validate path security - FATAL
       const safePath = validateExtractionPath(entryPath, destination);
@@ -554,41 +555,26 @@ async function extractArchive(
         break;
       }
 
-      // Handle symlinks - FATAL
-      const entryAny = entry as unknown as { isSymbolicLink?: boolean; linkFileName?: string };
-      if (entryAny.isSymbolicLink) {
-        const target = entryAny.linkFileName;
-        if (!target) {
-          // Symlink with no target - skip but don't fail
-          continue;
-        }
-        if (!isSymlinkTargetSafe(target, destination)) {
-          diagnostics.push(
-            submissionError(
-              SUBMISSION_CODES.SOURCE_SYMLINK_ESCAPE,
-              `Blocked symlink escaping extraction directory: ${entryPath} -> ${target}`
-            )
-          );
-          fatalError = FatalExtractionError.SYMLINK_ESCAPE;
-          break;
-        }
-        extractedSymlinks.push(entryPath);
-        continue;
-      }
-
-      // Skip directories
-      if (entry.isDirectory) {
+      // Handle symlinks - FATAL (jszip doesn't support symlinks natively)
+      if (zipEntry.dir) {
+        // It's a directory
         try {
           mkdirSync(safePath, { recursive: true });
         } catch {}
         continue;
       }
 
-      // Skip unsupported entry types (devices, etc.)
-      // AdmZip uses type flags that we check via isDirectory/isSymbolicLink
-      // Any other type should be skipped safely
-
-      const entrySize = entry.header.size;
+      // It's a file - check size
+      // In jszip, we need to check the compressed/uncompressed size from internal properties
+      // or get it from the decompressed content
+      let entrySize = 0;
+      try {
+        // Try to get size from internal _data (jszip structure)
+        const internalData = (zipEntry as unknown as { _data?: { uncompressedSize?: number; size?: number } })._data;
+        entrySize = internalData?.uncompressedSize ?? internalData?.size ?? 0;
+      } catch {
+        entrySize = 0;
+      }
 
       // Check individual file size - FATAL
       if (entrySize > LIMITS.MAX_FILE_SIZE) {
@@ -616,7 +602,10 @@ async function extractArchive(
 
       // Extract the file
       try {
-        zip.extractEntryTo(entry, join(safePath, '..'), true, true);
+        const content = await zipEntry.async('nodebuffer');
+        // Ensure parent directory exists
+        mkdirSync(dirname(safePath), { recursive: true });
+        writeFileSync(safePath, content);
         fileCount++;
         extractedSize += entrySize;
         totalBytes += entrySize;

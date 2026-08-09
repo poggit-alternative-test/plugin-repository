@@ -51,9 +51,16 @@ function loadReadTransportConfig() {
     fail('Invalid tester transport configuration.');
   }
   const githubAppConfig = testerConfig.githubAppConfig;
+  const accessToken = testerConfig.testOverrides?.accessToken;
+
+  if (!githubAppConfig?.appId && !accessToken) {
+    fail('Either GitHub App (M5_GITHUB_APP_ID) or GitHub Token (GITHUB_TOKEN) is required.');
+  }
+
   const githubClient = new RealGitHubClient({
     githubApp: githubAppConfig ?? undefined,
     installationId: githubAppConfig?.installationId,
+    accessToken: accessToken,
     writeEnabled: false,
     testerConfig,
   });
@@ -75,13 +82,19 @@ function loadWriteTransportConfig() {
   if (!testerConfig.allowRepositoryCreation) {
     fail('Repository creation is not enabled. Set M5_TESTER_ALLOW_REPO_CREATION=true to enable write operations.');
   }
+
+  // Use GitHub App if configured, otherwise use access token
   const githubAppConfig = testerConfig.githubAppConfig;
-  if (!githubAppConfig?.appId) {
-    fail('GitHub App configuration is required for write operations. Set M5_GITHUB_APP_ID and M5_GITHUB_APP_PRIVATE_KEY.');
+  const accessToken = testerConfig.testOverrides?.accessToken;
+
+  if (!githubAppConfig?.appId && !accessToken) {
+    fail('Either GitHub App (M5_GITHUB_APP_ID) or GitHub Token (GITHUB_TOKEN) is required for write operations.');
   }
+
   const githubClient = new RealGitHubClient({
-    githubApp: githubAppConfig,
-    installationId: githubAppConfig.installationId,
+    githubApp: githubAppConfig ?? undefined,
+    installationId: githubAppConfig?.installationId,
+    accessToken: accessToken,
     writeEnabled: true,
     testerConfig,
   });

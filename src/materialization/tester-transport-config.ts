@@ -229,6 +229,9 @@ export function loadTesterConfigFromEnv(): TesterTransportConfig {
   const privateKeyPath = process.env.M5_GITHUB_APP_PRIVATE_KEY_PATH;
   const privateKeyContent = process.env.M5_GITHUB_APP_PRIVATE_KEY;
 
+  // Check for direct access token (for testing with PAT)
+  const accessToken = process.env.GITHUB_TOKEN || process.env.M5_ACCESS_TOKEN;
+
   // Safe JSON parse for installation ID mapping
   let installationIdByOrg: Record<string, string> | undefined;
   const rawMapping = process.env.M5_GITHUB_APP_INSTALLATION_ID_BY_ORG;
@@ -267,6 +270,8 @@ export function loadTesterConfigFromEnv(): TesterTransportConfig {
       installationId: process.env.M5_GITHUB_APP_INSTALLATION_ID,
       installationIdByOrg,
     } : undefined,
+    // Allow access token for testing
+    testOverrides: accessToken ? { accessToken } : undefined,
     rateLimit: {
       maxRequestsPerMinute: parseInt(process.env.M5_RATE_LIMIT_MAX_PER_MINUTE || '30', 10),
       maxRetries: parseInt(process.env.M5_RATE_LIMIT_MAX_RETRIES || '3', 10),
