@@ -10,6 +10,7 @@
  */
 
 import { Link } from '@/components/ui';
+import { PluginIcon } from '@/features/_shared/plugin';
 import type { PluginListItem } from '@/services/generated';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -125,25 +126,7 @@ function PluginCard({ plugin }: { plugin: PluginListItem }) {
     >
       {/* Card header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-        {/* Plugin icon - Figma: 32x32, borderRadius: 8 */}
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            backgroundColor: colors.brandBg,
-            border: `1px solid ${colors.border}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 14,
-            fontWeight: 600,
-            color: colors.brand,
-            flexShrink: 0,
-          }}
-        >
-          {plugin.name.charAt(0).toUpperCase()}
-        </div>
+        <PluginIcon repo={plugin.repo} name={plugin.name} size={32} />
 
         {/* Info */}
         <div style={{ flex: 1, minWidth: 0 }}>

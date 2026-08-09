@@ -150,6 +150,8 @@ export interface Version {
     tag: string;
     publishedAt: string;
     changelog?: string;
+    prerelease?: boolean;
+    draft?: boolean;
   };
 
   artifact: {
@@ -157,6 +159,7 @@ export interface Version {
     sha256: string;
     size: number;
     downloadUrl: string;
+    downloads?: number;
   };
 
   checksums?: {

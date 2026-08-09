@@ -34,6 +34,7 @@ export function Header() {
       }}
     >
       <div
+        className="header-container px-2 sm:px-4 md:px-6 lg:px-10"
         style={{
           display: 'flex',
           height: 56,
@@ -41,7 +42,6 @@ export function Header() {
           margin: '0 auto',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '0 40px',
         }}
       >
         {/* Brand logo */}
@@ -69,9 +69,9 @@ export function Header() {
           </span>
         </Link>
 
-        {/* Desktop Navigation */}
+        {/* Desktop Navigation - hidden on mobile */}
         <nav
-          style={{ display: 'flex', alignItems: 'center', gap: 2 }}
+          className="desktop-nav"
           aria-label="Main navigation"
         >
           <NavLink
@@ -146,19 +146,11 @@ export function Header() {
           </a>
         </nav>
 
-        {/* Mobile Menu Button */}
+        {/* Mobile Menu Button - visible on mobile */}
         <button
           type="button"
           onClick={toggleMobileMenu}
-          style={{
-            display: 'none',
-            padding: 8,
-            borderRadius: 8,
-            background: 'transparent',
-            border: 'none',
-            cursor: 'pointer',
-            color: colors.textSecondary,
-          }}
+          className="hamburger-btn"
           aria-expanded={mobileMenuOpen}
           aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
         >
@@ -178,6 +170,25 @@ export function Header() {
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <NavLink
+              to="/plugins"
+              onClick={closeMobileMenu}
+              style={({ isActive }) => ({
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 12px',
+                fontSize: 14,
+                fontWeight: 500,
+                borderRadius: 8,
+                backgroundColor: isActive ? colors.brandBg : 'transparent',
+                color: isActive ? colors.brand : colors.textSecondary,
+                textDecoration: 'none',
+              })}
+            >
+              <Package className="h-4 w-4" />
+              All Plugins
+            </NavLink>
+            <NavLink
               to="/search"
               onClick={closeMobileMenu}
               style={({ isActive }) => ({
@@ -194,7 +205,7 @@ export function Header() {
               })}
             >
               <Search className="h-4 w-4" />
-              Browse Plugins
+              Browse
             </NavLink>
             <NavLink
               to="/authors"

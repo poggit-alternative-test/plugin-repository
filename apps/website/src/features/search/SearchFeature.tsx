@@ -7,12 +7,16 @@
 
 import { useMemo, useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Grid, List, X } from 'lucide-react';
+import { Search, Grid, List, X, SlidersHorizontal } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
 import type { PluginListItem, VersionStatus } from '@/services/generated';
 import { getPlugins } from '@/services/generated';
 import type { SortOption, ViewOption } from './hooks';
 import { getSortLabel } from './utils';
+import { PluginIcon } from '@/features/_shared/plugin';
+
+// Base URL for public paths
+const BASE_URL = import.meta.env.BASE_URL || '/';
 
 // Static categories from actual plugin data
 const CATEGORIES = [
@@ -43,9 +47,225 @@ const SORT_OPTIONS: SortOption[] = [
   'alphabetical',
 ];
 
+// Filter Panel Component (shared between desktop sidebar and mobile drawer)
+interface FilterPanelProps {
+  colors: ReturnType<typeof useTheme>['colors'];
+  isMobile?: boolean;
+  onClose?: () => void;
+}
+
+function FilterPanel({ colors, isMobile, onClose }: FilterPanelProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const category = searchParams.get('category') || '';
+  const status = searchParams.get('status') as VersionStatus | null;
+  const author = searchParams.get('author') || '';
+
+  const activeFilterCount = [category, status, author].filter(Boolean).length;
+
+  const updateParams = useCallback((updates: Record<string, string | null>) => {
+    const newParams = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === null || value === '') {
+        newParams.delete(key);
+      } else {
+        newParams.set(key, value);
+      }
+    });
+    newParams.delete('page');
+    setSearchParams(newParams);
+  }, [searchParams, setSearchParams]);
+
+  const handleCategoryChange = useCallback((value: string) => {
+    updateParams({ category: value || null });
+  }, [updateParams]);
+
+  const handleStatusChange = useCallback((value: VersionStatus | null) => {
+    updateParams({ status: value || null });
+  }, [updateParams]);
+
+  const handleAuthorChange = useCallback((value: string) => {
+    updateParams({ author: value || null });
+  }, [updateParams]);
+
+  const clearAllFilters = useCallback(() => {
+    updateParams({ category: null, status: null, author: null });
+  }, [updateParams]);
+
+  const handleFilterChange = (action: () => void) => {
+    action();
+    if (isMobile && onClose) {
+      setTimeout(onClose, 150);
+    }
+  };
+
+  return (
+    <div style={{
+      backgroundColor: colors.card,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 12,
+      padding: 20,
+      ...(isMobile ? {} : { position: 'sticky', top: 72 }),
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: colors.textPrimary, margin: 0 }}>
+          Filters
+        </h3>
+        {activeFilterCount > 0 && (
+          <button
+            onClick={clearAllFilters}
+            style={{
+              fontSize: 12,
+              color: colors.brand,
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            Clear all
+          </button>
+        )}
+      </div>
+
+      {/* Active Filter Badges */}
+      {activeFilterCount > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 20 }}>
+          {category && (
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '4px 8px',
+              fontSize: 11,
+              backgroundColor: colors.brandBg,
+              color: colors.brand,
+              borderRadius: 6,
+            }}>
+              Category: {category}
+              <button onClick={() => handleFilterChange(() => handleCategoryChange(''))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {status && (
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '4px 8px',
+              fontSize: 11,
+              backgroundColor: colors.brandBg,
+              color: colors.brand,
+              borderRadius: 6,
+            }}>
+              Status: {status}
+              <button onClick={() => handleFilterChange(() => handleStatusChange(null))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {author && (
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '4px 8px',
+              fontSize: 11,
+              backgroundColor: colors.brandBg,
+              color: colors.brand,
+              borderRadius: 6,
+            }}>
+              Author: {author}
+              <button onClick={() => handleFilterChange(() => handleAuthorChange(''))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Status Filter */}
+      <div style={{ marginBottom: 20 }}>
+        <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Status
+        </h4>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {STATUS_OPTIONS.map((option) => (
+            <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="radio"
+                name="status"
+                checked={status === option.value}
+                onChange={() => handleFilterChange(() => handleStatusChange(status === option.value ? null : option.value))}
+                style={{ accentColor: colors.brand }}
+              />
+              <span style={{ fontSize: 13, color: colors.textPrimary }}>
+                {option.label}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Category Filter */}
+      <div style={{ marginBottom: 20 }}>
+        <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Category
+        </h4>
+        <select
+          value={category}
+          onChange={(e) => handleFilterChange(() => handleCategoryChange(e.target.value))}
+          style={{
+            width: '100%',
+            padding: '8px 12px',
+            fontSize: 13,
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            color: colors.textPrimary,
+            outline: 'none',
+          }}
+        >
+          <option value="">All categories</option>
+          {CATEGORIES.map((cat) => (
+            <option key={cat} value={cat}>{cat}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Author Filter */}
+      <div>
+        <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Author
+        </h4>
+        <input
+          type="text"
+          placeholder="Filter by author..."
+          value={author}
+          onChange={(e) => handleFilterChange(() => handleAuthorChange(e.target.value))}
+          style={{
+            width: '100%',
+            padding: '8px 12px',
+            fontSize: 13,
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            color: colors.textPrimary,
+            outline: 'none',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function SearchFeature() {
   const { colors } = useTheme();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Mobile filter drawer state
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
 
   // State for plugins data
   const [allPlugins, setAllPlugins] = useState<PluginListItem[]>([]);
@@ -97,29 +317,12 @@ export function SearchFeature() {
     updateParams({ q: value || null });
   }, [updateParams]);
 
-  // Filter handlers
-  const handleCategoryChange = useCallback((value: string) => {
-    updateParams({ category: value || null });
-  }, [updateParams]);
-
-  const handleStatusChange = useCallback((value: VersionStatus | null) => {
-    updateParams({ status: value || null });
-  }, [updateParams]);
-
-  const handleAuthorChange = useCallback((value: string) => {
-    updateParams({ author: value || null });
-  }, [updateParams]);
-
   const handleSortChange = useCallback((value: SortOption) => {
     updateParams({ sort: value });
   }, [updateParams]);
 
   const handleViewChange = useCallback((value: ViewOption) => {
     updateParams({ view: value });
-  }, [updateParams]);
-
-  const clearAllFilters = useCallback(() => {
-    updateParams({ category: null, status: null, author: null });
   }, [updateParams]);
 
   // Filter plugins based on current filters
@@ -237,9 +440,9 @@ export function SearchFeature() {
 
   return (
     <div style={{ backgroundColor: colors.bg, minHeight: '100vh' }}>
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 40px' }}>
+      <div className="page-container">
         {/* Search Bar */}
-        <div style={{ marginBottom: 32 }}>
+        <div style={{ marginBottom: 24 }}>
           <div style={{ position: 'relative', maxWidth: 720 }}>
             <div style={{
               position: 'absolute',
@@ -273,174 +476,113 @@ export function SearchFeature() {
           </div>
         </div>
 
-        {/* Main Content */}
-        <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 32 }}>
-          {/* Filters Sidebar */}
-          <aside>
-            <div style={{
+        {/* Mobile Filter Toggle */}
+        <div className="md:hidden" style={{ marginBottom: 16 }}>
+          <button
+            onClick={() => setFilterDrawerOpen(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '10px 16px',
               backgroundColor: colors.card,
               border: `1px solid ${colors.border}`,
-              borderRadius: 12,
-              padding: 20,
-              position: 'sticky',
-              top: 72,
-            }}>
-              {/* Header */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 600, color: colors.textPrimary, margin: 0 }}>
-                  Filters
-                </h3>
-                {activeFilterCount > 0 && (
+              borderRadius: 10,
+              fontSize: 13,
+              fontWeight: 500,
+              color: colors.textPrimary,
+              cursor: 'pointer',
+              width: '100%',
+            }}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span style={{
+                marginLeft: 'auto',
+                padding: '2px 8px',
+                backgroundColor: colors.brand,
+                color: 'white',
+                borderRadius: 10,
+                fontSize: 11,
+                fontWeight: 600,
+              }}>
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Main Content */}
+        <div className="search-layout" style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 32 }}>
+          {/* Filters Sidebar - Desktop */}
+          <aside className="search-sidebar hidden md:block">
+            <FilterPanel colors={colors} />
+          </aside>
+
+          {/* Mobile Filter Drawer */}
+          {filterDrawerOpen && (
+            <div className="md:hidden">
+              {/* Backdrop */}
+              <div
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                  zIndex: 40,
+                }}
+                onClick={() => setFilterDrawerOpen(false)}
+              />
+              {/* Drawer */}
+              <div style={{
+                position: 'fixed',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                maxHeight: '85vh',
+                backgroundColor: colors.bg,
+                borderTopLeftRadius: 20,
+                borderTopRightRadius: 20,
+                zIndex: 50,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}>
+                {/* Drawer Handle */}
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}>
+                  <div style={{ width: 40, height: 4, backgroundColor: colors.border, borderRadius: 2 }} />
+                </div>
+                {/* Drawer Header */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px 16px', borderBottom: `1px solid ${colors.border}` }}>
+                  <h3 style={{ fontSize: 16, fontWeight: 600, color: colors.textPrimary, margin: 0 }}>
+                    Filters
+                  </h3>
                   <button
-                    onClick={clearAllFilters}
+                    onClick={() => setFilterDrawerOpen(false)}
                     style={{
-                      fontSize: 12,
-                      color: colors.brand,
-                      background: 'none',
+                      padding: 8,
+                      backgroundColor: colors.card,
                       border: 'none',
+                      borderRadius: 8,
                       cursor: 'pointer',
+                      color: colors.textSecondary,
                     }}
                   >
-                    Clear all
+                    <X className="h-5 w-5" />
                   </button>
-                )}
-              </div>
-
-              {/* Active Filter Badges */}
-              {activeFilterCount > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 20 }}>
-                  {category && (
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '4px 8px',
-                      fontSize: 11,
-                      backgroundColor: colors.brandBg,
-                      color: colors.brand,
-                      borderRadius: 6,
-                    }}>
-                      Category: {category}
-                      <button onClick={() => handleCategoryChange('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  )}
-                  {status && (
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '4px 8px',
-                      fontSize: 11,
-                      backgroundColor: colors.brandBg,
-                      color: colors.brand,
-                      borderRadius: 6,
-                    }}>
-                      Status: {status}
-                      <button onClick={() => handleStatusChange(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  )}
-                  {author && (
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '4px 8px',
-                      fontSize: 11,
-                      backgroundColor: colors.brandBg,
-                      color: colors.brand,
-                      borderRadius: 6,
-                    }}>
-                      Author: {author}
-                      <button onClick={() => handleAuthorChange('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex' }}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  )}
                 </div>
-              )}
-
-              {/* Status Filter */}
-              <div style={{ marginBottom: 20 }}>
-                <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Status
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {STATUS_OPTIONS.map((option) => (
-                    <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="radio"
-                        name="status"
-                        checked={status === option.value}
-                        onChange={() => handleStatusChange(status === option.value ? null : option.value)}
-                        style={{ accentColor: colors.brand }}
-                      />
-                      <span style={{ fontSize: 13, color: colors.textPrimary }}>
-                        {option.label}
-                      </span>
-                    </label>
-                  ))}
+                {/* Drawer Content */}
+                <div style={{ overflowY: 'auto', flex: 1 }}>
+                  <FilterPanel colors={colors} isMobile onClose={() => setFilterDrawerOpen(false)} />
                 </div>
-              </div>
-
-              {/* Category Filter */}
-              <div style={{ marginBottom: 20 }}>
-                <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Category
-                </h4>
-                <select
-                  value={category}
-                  onChange={(e) => handleCategoryChange(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    fontSize: 13,
-                    backgroundColor: colors.surface,
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: 8,
-                    color: colors.textPrimary,
-                    outline: 'none',
-                  }}
-                >
-                  <option value="">All categories</option>
-                  {CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Author Filter */}
-              <div>
-                <h4 style={{ fontSize: 12, fontWeight: 600, color: colors.textSecondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Author
-                </h4>
-                <input
-                  type="text"
-                  placeholder="Filter by author..."
-                  value={author}
-                  onChange={(e) => handleAuthorChange(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px',
-                    fontSize: 13,
-                    backgroundColor: colors.surface,
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: 8,
-                    color: colors.textPrimary,
-                    outline: 'none',
-                  }}
-                />
               </div>
             </div>
-          </aside>
+          )}
 
           {/* Results */}
           <main>
             {/* Toolbar */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: `1px solid ${colors.border}`, marginBottom: 16 }}>
+            <div className="search-toolbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: `1px solid ${colors.border}`, marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
               <div style={{ fontSize: 14, color: colors.textSecondary }}>
                 {filteredPlugins.length === 0 ? (
                   'No results'
@@ -451,10 +593,10 @@ export function SearchFeature() {
                 )}
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 {/* Sort */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 12, color: colors.textMuted }}>Sort by:</span>
+                  <span className="hide-on-mobile" style={{ fontSize: 12, color: colors.textMuted }}>Sort by:</span>
                   <select
                     value={sort}
                     onChange={(e) => handleSortChange(e.target.value as SortOption)}
@@ -526,11 +668,11 @@ export function SearchFeature() {
                 </p>
               </div>
             ) : view === 'grid' ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+              <div className="search-results-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
                 {filteredPlugins.map((plugin) => (
                   <a
                     key={plugin.id}
-                    href={`/plugins/${plugin.id}`}
+                    href={`${BASE_URL}plugins/${plugin.id}`}
                     style={{
                       display: 'block',
                       padding: 16,
@@ -550,22 +692,7 @@ export function SearchFeature() {
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}>
-                      <div style={{
-                        width: 32,
-                        height: 32,
-                        borderRadius: 8,
-                        backgroundColor: colors.brandBg,
-                        border: `1px solid ${colors.border}`,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: colors.brand,
-                        flexShrink: 0,
-                      }}>
-                        {plugin.name.charAt(0).toUpperCase()}
-                      </div>
+                      <PluginIcon repo={plugin.repo} name={plugin.name} size={32} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 13, fontWeight: 600, color: colors.textPrimary, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {plugin.name}
@@ -594,7 +721,8 @@ export function SearchFeature() {
                 {filteredPlugins.map((plugin) => (
                   <a
                     key={plugin.id}
-                    href={`/plugins/${plugin.id}`}
+                    href={`${BASE_URL}plugins/${plugin.id}`}
+                    className="search-list-item"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -605,6 +733,7 @@ export function SearchFeature() {
                       borderRadius: 10,
                       textDecoration: 'none',
                       transition: 'all 0.15s ease',
+                      flexWrap: 'wrap',
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.borderColor = colors.brand;
@@ -613,22 +742,7 @@ export function SearchFeature() {
                       e.currentTarget.style.borderColor = colors.border;
                     }}
                   >
-                    <div style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 10,
-                      backgroundColor: colors.brandBg,
-                      border: `1px solid ${colors.border}`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 18,
-                      fontWeight: 600,
-                      color: colors.brand,
-                      flexShrink: 0,
-                    }}>
-                      {plugin.name.charAt(0).toUpperCase()}
-                    </div>
+                    <PluginIcon repo={plugin.repo} name={plugin.name} size={44} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 15, fontWeight: 600, color: colors.textPrimary, marginBottom: 4 }}>
                         {plugin.name}
@@ -637,12 +751,15 @@ export function SearchFeature() {
                         {plugin.summary}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0, textAlign: 'right' }}>
                       <code style={{ fontSize: 11, color: colors.brand, fontFamily: 'var(--font-mono)' }}>
                         v{plugin.latestVersion}
                       </code>
                       <span style={{ fontSize: 10, color: colors.textMuted }}>
                         ↓ {formatNumber(plugin.downloads)}
+                      </span>
+                      <span style={{ fontSize: 10, color: colors.textMuted, fontFamily: 'var(--font-mono)' }}>
+                        by {plugin.author}
                       </span>
                     </div>
                   </a>

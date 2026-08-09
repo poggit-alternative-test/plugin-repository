@@ -2,36 +2,37 @@
  * Plugins Page
  *
  * Displays all discovered plugins with filtering and sorting.
- * Uses Tailwind CSS for styling.
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { PluginCard } from '@/components/PluginCard';
-import type { Plugin } from '@/types/plugin';
+import { useSearchParams } from 'react-router-dom';
+import { Search, X } from 'lucide-react';
+import { useTheme } from '@/contexts/ThemeContext';
+import { PluginCard } from '@/features/_shared/plugin';
+import { getPlugins } from '@/services/generated';
+import type { PluginListItem } from '@/services/generated';
 
-type SortOption = 'stars' | 'name' | 'updated' | 'downloads';
-type FilterOption = 'all' | 'verified' | 'unverified';
+type SortOption = 'downloads' | 'name' | 'updated';
 
 export function PluginsPage() {
-  const [plugins, setPlugins] = useState<Plugin[]>([]);
+  const { colors } = useTheme();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [plugins, setPlugins] = useState<PluginListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<SortOption>('stars');
-  const [filterBy, setFilterBy] = useState<FilterOption>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+
+  const query = searchParams.get('q') || '';
+  const author = searchParams.get('author') || '';
+  const sort = (searchParams.get('sort') as SortOption) || 'downloads';
 
   useEffect(() => {
     async function loadPlugins() {
       try {
-        const response = await fetch(`${import.meta.env.BASE_URL}generated/plugins/index.json`);
-        if (!response.ok) {
-          throw new Error('Failed to load plugins');
-        }
-        const data = await response.json();
-        setPlugins(data);
+        const result = await getPlugins();
+        setPlugins(result.plugins || []);
         setError(null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        setError(err instanceof Error ? err.message : 'Failed to load plugins');
         setPlugins([]);
       } finally {
         setLoading(false);
@@ -41,212 +42,291 @@ export function PluginsPage() {
     loadPlugins();
   }, []);
 
+  const updateParams = (updates: Record<string, string | null>) => {
+    const newParams = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === null || value === '') {
+        newParams.delete(key);
+      } else {
+        newParams.set(key, value);
+      }
+    });
+    setSearchParams(newParams);
+  };
+
   // Filter and sort plugins
   const filteredPlugins = useMemo(() => {
+    if (!Array.isArray(plugins)) return [];
+
     let result = [...plugins];
 
     // Apply search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
+    if (query) {
+      const q = query.toLowerCase();
       result = result.filter(p =>
-        p.plugin.name.toLowerCase().includes(query) ||
-        p.plugin.author.toLowerCase().includes(query) ||
-        p.repo.toLowerCase().includes(query) ||
-        p.description?.toLowerCase().includes(query)
+        p.name.toLowerCase().includes(q) ||
+        p.author.toLowerCase().includes(q) ||
+        p.summary?.toLowerCase().includes(q)
       );
     }
 
-    // Apply verification filter
-    if (filterBy === 'verified') {
-      result = result.filter(p => p.verification.is_verified);
-    } else if (filterBy === 'unverified') {
-      result = result.filter(p => !p.verification.is_verified);
+    // Apply author filter
+    if (author) {
+      result = result.filter(p => p.author.toLowerCase() === author.toLowerCase());
     }
 
     // Apply sorting
     result.sort((a, b) => {
-      switch (sortBy) {
-        case 'stars':
-          return b.stats.stars - a.stats.stars;
-        case 'name':
-          return a.plugin.name.localeCompare(b.plugin.name);
-        case 'updated':
-          return new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime();
+      switch (sort) {
         case 'downloads':
-          const downloadsA = a.release?.assets?.[0]?.downloads || 0;
-          const downloadsB = b.release?.assets?.[0]?.downloads || 0;
-          return downloadsB - downloadsA;
+          return (b.downloads || 0) - (a.downloads || 0);
+        case 'name':
+          return a.name.localeCompare(b.name);
+        case 'updated':
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         default:
-          return 0;
+          return (b.downloads || 0) - (a.downloads || 0);
       }
     });
 
     return result;
-  }, [plugins, filterBy, sortBy, searchQuery]);
+  }, [plugins, query, author, sort]);
 
   // Stats
   const stats = useMemo(() => {
-    const verified = plugins.filter(p => p.verification.is_verified).length;
-    const totalDownloads = plugins.reduce(
-      (sum, p) => sum + (p.release?.assets?.[0]?.downloads || 0),
-      0
-    );
-    const totalStars = plugins.reduce((sum, p) => sum + p.stats.stars, 0);
-    return { verified, totalDownloads, totalStars };
+    const totalDownloads = plugins.reduce((sum, p) => sum + (p.downloads || 0), 0);
+    return { total: plugins.length, totalDownloads };
   }, [plugins]);
+
+  const activeFilterCount = [query, author].filter(Boolean).length;
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <div className="w-10 h-10 border-4 border-gray-200 border-t-blue-600 rounded-full animate-spin"></div>
-        <p className="text-gray-500 dark:text-gray-400">Loading plugins...</p>
+      <div style={{ backgroundColor: colors.bg, minHeight: '100vh' }}>
+        <div className="page-container">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px' }}>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 14, color: colors.textSecondary }}>Loading plugins...</div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 text-center p-8">
-        <h2 className="text-xl font-semibold text-red-600 dark:text-red-400">Error Loading Plugins</h2>
-        <p className="text-gray-600 dark:text-gray-300">{error}</p>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Make sure the GitHub Actions workflow has run to discover plugins.
-        </p>
+      <div style={{ backgroundColor: colors.bg, minHeight: '100vh' }}>
+        <div className="page-container">
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '64px 24px',
+            backgroundColor: colors.card,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 12,
+            textAlign: 'center',
+          }}>
+            <p style={{ fontSize: 16, fontWeight: 500, color: colors.error, marginBottom: 8 }}>
+              Failed to load plugins
+            </p>
+            <p style={{ fontSize: 14, color: colors.textMuted }}>
+              {error}
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      {/* Header */}
-      <header className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-          Plugin Repository
-        </h1>
-        <p className="text-gray-600 dark:text-gray-300 max-w-2xl mx-auto mb-6">
-          Discover PocketMine-MP plugins built with pmmp-plugin-actions.
-          Verified plugins are built using the official build workflow.
-        </p>
-
-        {/* Stats */}
-        <div className="flex justify-center gap-8 flex-wrap">
-          <div className="flex flex-col items-center">
-            <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-              {plugins.length}
-            </span>
-            <span className="text-sm text-gray-500 dark:text-gray-400">Plugins</span>
-          </div>
-          <div className="flex flex-col items-center">
-            <span className="text-2xl font-bold text-green-600 dark:text-green-400">
-              {stats.verified}
-            </span>
-            <span className="text-sm text-gray-500 dark:text-gray-400">Verified</span>
-          </div>
-          <div className="flex flex-col items-center">
-            <span className="text-2xl font-bold text-amber-500">
-              ⭐ {stats.totalStars.toLocaleString()}
-            </span>
-            <span className="text-sm text-gray-500 dark:text-gray-400">Total Stars</span>
-          </div>
-          <div className="flex flex-col items-center">
-            <span className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-              📥 {stats.totalDownloads.toLocaleString()}
-            </span>
-            <span className="text-sm text-gray-500 dark:text-gray-400">Downloads</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Filters & Search */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl p-4 mb-6 border border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row gap-4 items-center justify-between">
-        {/* Search */}
-        <div className="w-full sm:w-80">
-          <input
-            type="text"
-            placeholder="Search plugins..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-4 py-2.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-
-        <div className="flex gap-4 items-center w-full sm:w-auto">
-          {/* Filter */}
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-600 dark:text-gray-300">Filter:</label>
-            <select
-              value={filterBy}
-              onChange={(e) => setFilterBy(e.target.value as FilterOption)}
-              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="all">All Plugins</option>
-              <option value="verified">Verified Only</option>
-              <option value="unverified">Unverified Only</option>
-            </select>
-          </div>
-
-          {/* Sort */}
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-600 dark:text-gray-300">Sort by:</label>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
-              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="stars">Most Stars</option>
-              <option value="name">Name (A-Z)</option>
-              <option value="updated">Recently Updated</option>
-              <option value="downloads">Most Downloads</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Results count */}
-      <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-        Showing {filteredPlugins.length} of {plugins.length} plugins
-        {filterBy !== 'all' && ` (${filterBy})`}
-      </div>
-
-      {/* Plugin Grid */}
-      {filteredPlugins.length === 0 ? (
-        <div className="text-center py-16 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-            No plugins found
-          </h2>
-          <p className="text-gray-500 dark:text-gray-400">
-            {searchQuery
-              ? 'Try a different search term.'
-              : 'No plugins have been discovered yet.'}
+    <div style={{ backgroundColor: colors.bg, minHeight: '100vh' }}>
+      <div className="page-container">
+        {/* Header */}
+        <header style={{ marginBottom: 32 }}>
+          <h1 style={{
+            fontSize: 28,
+            fontWeight: 700,
+            color: colors.textPrimary,
+            marginBottom: 8,
+            letterSpacing: '-0.02em',
+          }}>
+            Plugin Repository
+          </h1>
+          <p style={{
+            fontSize: 14,
+            color: colors.textSecondary,
+            maxWidth: 600,
+          }}>
+            Discover PocketMine-MP plugins available in the registry.
           </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredPlugins.map((plugin) => (
-            <PluginCard key={plugin.repo} plugin={plugin} />
-          ))}
-        </div>
-      )}
 
-      {/* Footer info */}
-      <div className="mt-12 pt-8 border-t border-gray-200 dark:border-gray-700 text-center">
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-          Plugins are automatically discovered based on repositories
-          using the pmmp-plugin-actions workflow.
-          Verification status indicates whether plugins are built
-          with the official build system.
-        </p>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Want your plugin listed?
-          <a
-            href="https://github.com/axolotl-pm/pmmp-plugin-actions"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-600 dark:text-blue-400 hover:underline ml-1"
-          >
-            Add pmmp-plugin-actions to your repository
-          </a>
-        </p>
+          {/* Stats */}
+          <div style={{ display: 'flex', gap: 32, marginTop: 20, flexWrap: 'wrap' }}>
+            <div>
+              <span style={{ fontSize: 24, fontWeight: 700, color: colors.brand }}>
+                {stats.total}
+              </span>
+              <span style={{ fontSize: 12, color: colors.textMuted, marginLeft: 4 }}>
+                Plugins
+              </span>
+            </div>
+            <div>
+              <span style={{ fontSize: 24, fontWeight: 700, color: colors.textPrimary }}>
+                {stats.totalDownloads >= 1000000
+                  ? `${(stats.totalDownloads / 1000000).toFixed(1)}M`
+                  : stats.totalDownloads >= 1000
+                    ? `${(stats.totalDownloads / 1000).toFixed(1)}k`
+                    : stats.totalDownloads}
+              </span>
+              <span style={{ fontSize: 12, color: colors.textMuted, marginLeft: 4 }}>
+                Downloads
+              </span>
+            </div>
+          </div>
+        </header>
+
+        {/* Search & Filters */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+          marginBottom: 24,
+        }}>
+          {/* Search Bar */}
+          <div style={{ position: 'relative', maxWidth: 480 }}>
+            <div style={{
+              position: 'absolute',
+              left: 16,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: colors.textMuted,
+              pointerEvents: 'none',
+            }}>
+              <Search className="h-5 w-5" />
+            </div>
+            <input
+              type="search"
+              placeholder="Search plugins..."
+              value={query}
+              onChange={(e) => updateParams({ q: e.target.value || null })}
+              style={{
+                width: '100%',
+                padding: '12px 18px',
+                paddingLeft: 48,
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 10,
+                fontSize: 14,
+                color: colors.textPrimary,
+                outline: 'none',
+              }}
+            />
+          </div>
+
+          {/* Filter Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {/* Sort */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: colors.textMuted }}>Sort by:</span>
+              <select
+                value={sort}
+                onChange={(e) => updateParams({ sort: e.target.value })}
+                style={{
+                  padding: '8px 12px',
+                  fontSize: 13,
+                  backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 8,
+                  color: colors.textPrimary,
+                  outline: 'none',
+                }}
+              >
+                <option value="downloads">Most Downloads</option>
+                <option value="name">Name (A-Z)</option>
+                <option value="updated">Recently Updated</option>
+              </select>
+            </div>
+
+            {/* Author Filter */}
+            <input
+              type="text"
+              placeholder="Filter by author..."
+              value={author}
+              onChange={(e) => updateParams({ author: e.target.value || null })}
+              style={{
+                padding: '8px 12px',
+                fontSize: 13,
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 8,
+                color: colors.textPrimary,
+                outline: 'none',
+                width: 160,
+              }}
+            />
+
+            {/* Clear Filters */}
+            {activeFilterCount > 0 && (
+              <button
+                onClick={() => updateParams({ q: null, author: null })}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '8px 12px',
+                  fontSize: 12,
+                  color: colors.brand,
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <X className="h-3 w-3" />
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Results count */}
+        <div style={{ fontSize: 13, color: colors.textMuted, marginBottom: 16 }}>
+          Showing {filteredPlugins.length} of {plugins.length} plugins
+        </div>
+
+        {/* Plugin Grid */}
+        {filteredPlugins.length === 0 ? (
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '64px 24px',
+            backgroundColor: colors.card,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 12,
+            textAlign: 'center',
+          }}>
+            <p style={{ fontSize: 16, fontWeight: 500, color: colors.textPrimary, marginBottom: 8 }}>
+              No plugins found
+            </p>
+            <p style={{ fontSize: 14, color: colors.textMuted }}>
+              {query || author ? 'Try adjusting your search or filters.' : 'No plugins have been discovered yet.'}
+            </p>
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gap: 16,
+          }}>
+            {filteredPlugins.map((plugin) => (
+              <PluginCard key={plugin.id} plugin={plugin} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

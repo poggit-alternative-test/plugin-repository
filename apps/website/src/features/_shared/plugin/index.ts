@@ -8,5 +8,6 @@
 export { PluginCard } from './PluginCard';
 export { PluginList } from './PluginList';
 export { PluginGrid } from './PluginGrid';
+export { PluginIcon } from './PluginIcon';
 export { VersionItem } from './VersionItem';
 export { VersionList } from './VersionList';

@@ -18,7 +18,7 @@ export function Footer() {
       className="border-t"
       style={{ backgroundColor: colors.bg, borderColor: colors.border }}
     >
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-10 lg:px-16">
+      <div className="footer-container mx-auto max-w-7xl px-2 sm:px-4 md:px-6 lg:px-10">
         {/* Main footer content */}
         <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
           {/* Navigation links */}

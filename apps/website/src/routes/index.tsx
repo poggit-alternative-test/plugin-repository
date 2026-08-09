@@ -39,6 +39,10 @@ const router = createBrowserRouter(
           element: <SearchPage />,
         },
         {
+          path: 'plugins',
+          element: <PluginsPage />,
+        },
+        {
           path: 'plugins/:slug',
           element: <PluginPage />,
         },
@@ -53,10 +57,6 @@ const router = createBrowserRouter(
         {
           path: 'about',
           element: <AboutPage />,
-        },
-        {
-          path: 'plugins',
-          element: <PluginsPage />,
         },
         {
           path: 'authors/:owner',

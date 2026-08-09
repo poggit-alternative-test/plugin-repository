@@ -7,6 +7,7 @@
 
 import { Link } from '@/components/ui';
 import { StatusBadge } from '@/components/ui';
+import { PluginIcon } from '@/features/_shared/plugin';
 import type { PluginListItem } from '@/services/generated';
 import { useTheme } from '@/contexts/ThemeContext';
 
@@ -37,19 +38,9 @@ export function PluginCard({ plugin, className = '' }: PluginCardProps) {
         }}
       >
         <div className="flex flex-col gap-3">
-          {/* Plugin icon placeholder and name row */}
+          {/* Plugin icon and name row */}
           <div className="flex items-center gap-2.5">
-            {/* Plugin icon - Figma: width/height 28, borderRadius 7 */}
-            <div
-              className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[13px] font-medium"
-              style={{
-                backgroundColor: colors.brandBg,
-                border: `1px solid ${colors.border}`,
-                color: colors.brand,
-              }}
-            >
-              {plugin.name.charAt(0).toUpperCase()}
-            </div>
+            <PluginIcon repo={plugin.repo} name={plugin.name} size={28} />
 
             {/* Plugin name and status */}
             <div className="flex flex-1 items-center justify-between gap-2">
