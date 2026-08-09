@@ -153,13 +153,16 @@ async function execute(): Promise<void> {
   const service = createServiceWithClient(githubClient);
 
   const pluginId = arg('--plugin-slug'); const sha = arg('--sha'); const repository = arg('--repository'); const version = arg('--version') || '1.0.0';
+  const dryRun = has('--dry-run');
   if (!pluginId || !isValidPluginId(pluginId)) fail('Use a valid --plugin-slug.');
   if (!sha || !isValidGitSha(sha)) fail('Use an exact 40-character --sha.');
   if (!repository) fail('--repository is required; M5 verifies it against trusted M4 state.');
   if (!isValidSemVer(version)) fail('Use a valid --version.');
 
-  // Generate plan first
-  const planResult = await service.generatePlan({ pluginId: pluginId as PluginId, version: version as SemVer, upstreamRepository: repository as RepositoryIdentity, upstreamCommit: sha as GitSha });
+  console.error('[DEBUG] Dry run mode:', dryRun);
+
+  // Generate plan first (default to dry-run=false for execute command)
+  const planResult = await service.generatePlan({ pluginId: pluginId as PluginId, version: version as SemVer, upstreamRepository: repository as RepositoryIdentity, upstreamCommit: sha as GitSha }, { dryRun: dryRun ?? false });
   if (planResult.errors.length) {
     for (const error of planResult.errors) console.error(`[${error.code}] ${error.message}`);
     process.exitCode = 1;
@@ -170,7 +173,7 @@ async function execute(): Promise<void> {
   const context = service.createTrustedExecutionContext();
 
   // Execute the plan
-  const result = await service.executePlan(planResult.plan, githubClient, context);
+  const result = await service.executePlan(planResult.plan, githubClient, context, { dryRun });
 
   console.log(JSON.stringify({
     success: result.success,
