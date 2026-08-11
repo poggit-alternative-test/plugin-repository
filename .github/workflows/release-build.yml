@@ -34,6 +34,9 @@ jobs:
     outputs:
       version: ${{ steps.extract.outputs.version }}
       is_prerelease: ${{ steps.extract.outputs.is_prerelease }}
+      plugin_name: ${{ steps.plugin_info.outputs.plugin_name }}
+      plugin_api: ${{ steps.plugin_info.outputs.plugin_api }}
+      plugin_author: ${{ steps.plugin_info.outputs.plugin_author }}
 
     steps:
       - name: Checkout code
@@ -42,7 +45,9 @@ jobs:
       - name: Extract version from tag
         id: extract
         run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
+          # Get version from tag ref
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"  # Remove leading v if present
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
           # Check if prerelease
@@ -52,7 +57,10 @@ jobs:
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
           fi
 
+          echo "Extracted version: ${VERSION}"
+
       - name: Validate plugin.yml
+        id: plugin_info
         run: |
           if [ ! -f plugin.yml ]; then
             echo "ERROR: plugin.yml not found"
@@ -60,17 +68,24 @@ jobs:
           fi
 
           echo "=== plugin.yml validation ==="
-          grep -E "^name:\s*" plugin.yml || echo "WARNING: name not found"
-          grep -E "^version:\s*" plugin.yml || echo "WARNING: version not found"
-          grep -E "^api:\s*" plugin.yml || echo "WARNING: api version not found"
-          grep -E "^main:\s*" plugin.yml || echo "WARNING: main class not found"
 
-          # Check if version matches tag
-          PLUGIN_VERSION=$(grep -E "^version:\s*" plugin.yml | sed 's/version:\s*//' | tr -d '"' | tr -d "'" | tr -d ' ')
-          TAG_VERSION="${VERSION#v}"
+          # Extract plugin info
+          NAME=$(grep -E "^name:" plugin.yml | sed 's/name:\s*//' | tr -d '"'"'"' | tr -d '[:space:]')
+          VERSION_PKG=$(grep -E "^version:" plugin.yml | sed 's/version:\s*//' | tr -d '"'"'"' | tr -d '[:space:]')
+          API=$(grep -E "^api:" plugin.yml | sed 's/api:\s*//' | tr -d '"'"'"' | tr -d '[:space:]' | sed 's/\s.*//')
+          AUTHOR=$(grep -E "^author:" plugin.yml | sed 's/author:\s*//' | tr -d '"'"'"' | cut -d',' -f1 | tr -d '[:space:]')
 
-          if [ "${PLUGIN_VERSION}" != "${TAG_VERSION}" ]; then
-            echo "WARNING: plugin.yml version (${PLUGIN_VERSION}) doesn't match tag (${TAG_VERSION})"
+          echo "plugin_name=${NAME}" >> $GITHUB_OUTPUT
+          echo "plugin_version=${VERSION_PKG}" >> $GITHUB_OUTPUT
+          echo "plugin_api=${API}" >> $GITHUB_OUTPUT
+          echo "plugin_author=${AUTHOR}" >> $GITHUB_OUTPUT
+
+          echo "Plugin: ${NAME} v${VERSION_PKG}"
+          echo "API: ${API}"
+
+          # Validate version matches tag
+          if [ -n "${VERSION_PKG}" ] && [ "${VERSION_PKG}" != "${VERSION}" ]; then
+            echo "WARNING: plugin.yml version (${VERSION_PKG}) doesn't match tag (${VERSION})"
           fi
 
   # --------------------------------------------------------------------------
@@ -85,7 +100,6 @@ jobs:
       phar_path: ${{ steps.build.outputs.phar_path }}
       sha256: ${{ steps.build.outputs.sha256 }}
       size_bytes: ${{ steps.build.outputs.size_bytes }}
-      version: ${{ needs.validate.outputs.version }}
 
     steps:
       - name: Checkout code
@@ -97,83 +111,84 @@ jobs:
           php-version: ${{ env.PHP_VERSION }}
           extensions: zip, phar
 
-      - name: Get plugin info
-        id: plugin_info
-        run: |
-          NAME=$(grep -E "^name:\s*" plugin.yml | sed 's/name:\s*//' | tr -d '"' | tr -d "'")
-          VERSION=$(grep -E "^version:\s*" plugin.yml | sed 's/version:\s*//' | tr -d '"' | tr -d "'")
-          API=$(grep -E "^api:\s*" plugin.yml | sed 's/api:\s*//' | tr -d '"' | tr -d "'")
-          AUTHOR=$(grep -E "^author:\s*" plugin.yml | sed 's/author:\s*//' | tr -d '"' | tr -d "'")
-
-          echo "plugin_name=${NAME}" >> $GITHUB_OUTPUT
-          echo "plugin_version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "plugin_api=${API}" >> $GITHUB_OUTPUT
-          echo "plugin_author=${AUTHOR}" >> $GITHUB_OUTPUT
-
       - name: Install Composer dependencies
-        if: file_exists('composer.json')
+        if: hashFiles('composer.json') != ''
         run: |
-          composer install --no-dev --prefer-dist --optimize-autoloader
+          composer install --no-dev --prefer-dist --optimize-autoloader || true
 
       - name: Download Pharynx
+        id: pharynx
         run: |
           mkdir -p .build
 
-          # Try multiple sources for pharynx
-          curl -sL -o .build/pharynx.phar \
+          curl -sL --fail --max-time 60 -o .build/pharynx.phar \
             "https://github.com/SOF3/Pharynx/releases/latest/download/pharynx.phar" \
-            || echo "Using fallback build"
+            && echo "pharynx_status=downloaded" >> $GITHUB_OUTPUT \
+            || echo "pharynx_status=fallback" >> $GITHUB_OUTPUT
 
       - name: Build PHAR
         id: build
         run: |
-          PLUGIN_NAME="${{ steps.plugin_info.outputs.plugin_name }}"
+          PLUGIN_NAME="${{ needs.validate.outputs.plugin_name }}"
           VERSION="${{ needs.validate.outputs.version }}"
-          PHAR_NAME="${PLUGIN_NAME}-${VERSION#v}.phar"
+          PHAR_NAME="${PLUGIN_NAME}-${VERSION}.phar"
 
-          echo "Building: ${PHAR_NAME}"
+          echo "=== Building ${PHAR_NAME} ==="
 
-          if [ -f .build/pharynx.phar ]; then
-            php .build/pharynx.phar \
-              -i . \
-              -o ".build" \
-              -p="${PHAR_NAME}" \
-              2>&1
+          # Try Pharynx if available
+          if [ "${{ steps.pharynx.outputs.pharynx_status }}" = "downloaded" ] && [ -f .build/pharynx.phar ]; then
+            echo "Building with Pharynx..."
+
+            if [ -f composer.json ]; then
+              php .build/pharynx.phar \
+                -i . \
+                -o ".build" \
+                -p="${PHAR_NAME}" \
+                -c 2>&1 || echo "Composer mode failed, trying without..."
+            fi
+
+            if [ ! -f ".build/${PHAR_NAME}" ]; then
+              php .build/pharynx.phar \
+                -i . \
+                -o ".build" \
+                -p="${PHAR_NAME}" 2>&1 || echo "Pharynx build failed"
+            fi
+          else
+            echo "Pharynx not available, build will fail"
           fi
 
-          # Verify build output
-          if [ ! -f ".build/${PHAR_NAME}" ]; then
+          # Verify PHAR was created
+          if [ -f ".build/${PHAR_NAME}" ]; then
+            SHA256=$(sha256sum ".build/${PHAR_NAME}" | awk '{print $1}')
+            SIZE=$(wc -c < ".build/${PHAR_NAME}")
+
+            echo "phar_path=.build/${PHAR_NAME}" >> $GITHUB_OUTPUT
+            echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+            echo "size_bytes=${SIZE}" >> $GITHUB_OUTPUT
+
+            echo "Build successful!"
+            echo "SHA-256: ${SHA256}"
+            echo "Size: ${SIZE} bytes"
+          else
             echo "ERROR: PHAR build failed"
             exit 1
           fi
 
-          # Calculate checksums
-          cd .build
-          SHA256=$(sha256sum "${PHAR_NAME}" | cut -d' ' -f1)
-          SIZE=$(stat -c%s "${PHAR_NAME}")
-
-          echo "phar_path=.build/${PHAR_NAME}" >> $GITHUB_OUTPUT
-          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
-          echo "size_bytes=${SIZE}" >> $GITHUB_OUTPUT
-
-          echo "=== Build Complete ==="
-          echo "File: ${PHAR_NAME}"
-          echo "SHA-256: ${SHA256}"
-          echo "Size: ${SIZE} bytes"
-
       - name: Generate checksums
         run: |
           cd .build
-          cat > checksums.txt << 'EOF'
-          # SHA-256 checksums for ${{ needs.validate.outputs.version }}
-          # Generated by Axolotl Plugin Repository
-          #
-          EOF
+          {
+            echo "# SHA-256 checksums for ${{ needs.validate.outputs.version }}"
+            echo "# Generated by Axolotl Plugin Repository"
+            echo "# $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+          } > checksums.txt
 
           for f in *.phar; do
-            echo "$(sha256sum "$f" | cut -d' ' -f1)  $f" >> checksums.txt
+            if [ -f "$f" ]; then
+              echo "$(sha256sum "$f" | cut -d' ' -f1)  $f" >> checksums.txt
+            fi
           done
-
           cat checksums.txt
 
       - name: Generate metadata.json
@@ -182,14 +197,15 @@ jobs:
           cat > metadata.json << EOF
           {
             "schema_version": 1,
-            "plugin_name": "${{ steps.plugin_info.outputs.plugin_name }}",
+            "plugin_name": "${{ needs.validate.outputs.plugin_name }}",
             "version": "${{ needs.validate.outputs.version }}",
-            "api_version": "${{ steps.plugin_info.outputs.plugin_api }}",
-            "author": "${{ steps.plugin_info.outputs.plugin_author }}",
+            "api_version": "${{ needs.validate.outputs.plugin_api }}",
+            "author": "${{ needs.validate.outputs.plugin_author }}",
             "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "source_sha256": "${{ steps.build.outputs.sha256 }}",
             "repository": "${{ github.repository }}",
-            "commit": "${{ github.sha }}"
+            "commit": "${{ github.sha }}",
+            "tag": "v${{ needs.validate.outputs.version }}"
           }
           EOF
 
@@ -223,20 +239,21 @@ jobs:
           fetch-depth: 0
 
       - name: Generate Release Notes
-        id: release_notes
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          TAG_NAME="v${VERSION#v}"
+          TAG_NAME="v${{ needs.validate.outputs.version }}"
 
-          # Try to get commits since last tag
-          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "=== Release Notes for ${TAG_NAME} ==="
 
-          echo "=== Release Notes for ${VERSION} ==="
+          # Try to generate changelog from commits
+          CHANGELOG=""
+          if git rev-parse "${TAG_NAME}~1" >/dev/null 2>&1; then
+            CHANGELOG=$(git changelog --quiet "${TAG_NAME}" 2>/dev/null || echo "")
+          fi
 
-          cat > release_notes.md << 'RELEASENOTES'
-          # Release ${{ needs.validate.outputs.version }}
+          cat > release_notes.md << RELEASENOTES
+          # ${{ needs.validate.outputs.plugin_name }} ${{ needs.validate.outputs.version }}
 
-          ${{ steps.plugin_info.outputs.plugin_name }} ${{ needs.validate.outputs.version }}
+          ${{ needs.validate.outputs.plugin_api && steps.metadata.outputs.plugin_description }}
 
           ## Downloads
 
@@ -248,12 +265,16 @@ jobs:
 
           ## Installation
 
-          Download the `.phar` file and place it in your server's `plugins/` folder.
+          Download the \`.phar\` file and place it in your server's \`plugins/\` folder.
 
           ## System Requirements
 
-          - PocketMine-MP API: ${{ steps.plugin_info.outputs.plugin_api }}
+          - PocketMine-MP API: ${{ needs.validate.outputs.plugin_api }}
           - PHP: ${{ env.PHP_VERSION }}+
+
+          ## Changelog
+
+          ${CHANGELOG:-_No changelog available._}
 
           ---
           *Built automatically by [Axolotl Plugin Repository](https://github.com/axolotl-pm)*
@@ -265,8 +286,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.validate.outputs.version }}
-          name: "${{ steps.plugin_info.outputs.plugin_name }} ${{ needs.validate.outputs.version }}"
+          tag_name: v${{ needs.validate.outputs.version }}
+          name: "${{ needs.validate.outputs.plugin_name }} ${{ needs.validate.outputs.version }}"
           body_path: release_notes.md
           files: |
             .build/*.phar
@@ -274,7 +295,6 @@ jobs:
             .build/metadata.json
           draft: false
           prerelease: ${{ needs.validate.outputs.is_prerelease }}
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -282,5 +302,4 @@ jobs:
         run: |
           echo "🎉 Release ${{ needs.validate.outputs.version }} published successfully!"
           echo ""
-          echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.version }}"
-          echo "Download: https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.version }}/${{ steps.plugin_info.outputs.plugin_name }}-${{ needs.validate.outputs.version }}.phar"
+          echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/v${{ needs.validate.outputs.version }}"

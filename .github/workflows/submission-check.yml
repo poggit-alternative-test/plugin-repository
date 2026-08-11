@@ -1,4 +1,6 @@
-# Submission Check Workflow
+# =============================================================================
+# SUBMISSION CHECK WORKFLOW
+# =============================================================================
 #
 # Processes plugin submission Pull Requests for security validation.
 #
@@ -8,38 +10,24 @@
 # - Trusted tooling from base branch only
 # - Only submission file comes from PR HEAD at exact SHA
 #
-# TRUST BOUNDARY:
-#   BASE branch
-#       ↓
-#   trusted workflow/tooling/dependencies
-#
-#   PR HEAD SHA
-#       ↓
-#   submission YAML bytes only (fetched via GitHub API)
-#
-# This workflow runs against UNTRUSTED contributor code.
-# All plugin repository content is treated as attacker-controlled.
+# =============================================================================
 
 name: Submission Check
 
 on:
   pull_request:
     paths:
-      - 'submissions/**'
+      - submissions/**
       - '!submissions/**/*.md'
     types: [opened, synchronize, reopened]
 
-# Limit concurrent runs to prevent resource exhaustion
 concurrency:
   group: submission-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-# Least-privilege permissions
-# The workflow only needs to read repository contents and PR metadata
-# No write permissions required - results are reported via workflow job conclusion
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   validate-submission:
@@ -48,288 +36,135 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      # ============================================================
-      # STEP 1: Checkout the base (trusted) branch
-      # ============================================================
-      # This ensures we use the trusted version of our tooling,
-      # not anything potentially modified by the PR contributor.
       - name: Checkout base branch
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.base_ref }}
           fetch-depth: 1
 
-      # ============================================================
-      # STEP 2: Setup Node.js with trusted tooling
-      # ============================================================
       - name: Setup Node.js
-        uses: actions/setup-node@0a44ba7841725637e19ef6efaadb6f5f3ad9b18 # v4.2.0
+        uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: npm
 
-      # Install dependencies from TRUSTED lockfile only
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # ============================================================
-      # STEP 3: Get PR HEAD SHA (trusted metadata)
-      # ============================================================
       - name: Get PR metadata
         id: pr-meta
         run: |
-          echo "PR_HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV
-          echo "PR_BASE_REF=${{ github.base_ref }}" >> $GITHUB_ENV
+          echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "PR_HEAD_SHA=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+          echo "PR_AUTHOR=${{ github.event.pull_request.user.login }}" >> $GITHUB_OUTPUT
 
-      # ============================================================
-      # STEP 4: Get ALL changed files (with pagination)
-      # ============================================================
-      # Must get complete file list to validate scope
-      # Do NOT make security decisions from truncated file list
-      - name: Get all changed files
+      - name: Get changed files
         id: changed-files
-        uses: actions/github-script@7a5c598405927d774a95c935eb28a1293c2865db # v7.0.1
+        uses: actions/github-script@v7
         env:
-          PR_HEAD_SHA: ${{ env.PR_HEAD_SHA }}
-        run: |
-          const perPage = 100;
-          let page = 1;
-          let allFiles = [];
-          let hasMore = true;
-
-          while (hasMore) {
+          PR_NUMBER: ${{ steps.pr-meta.outputs.PR_NUMBER }}
+        with:
+          script: |
             const { data: files } = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: perPage,
-              page: page
+              pull_number: process.env.PR_NUMBER
             });
 
-            allFiles.push(...files.map(f => ({
-              filename: f.filename,
-              status: f.status,
-              additions: f.additions,
-              deletions: f.deletions
-            })));
-
-            hasMore = files.length === perPage;
-            page++;
-
-            // Safety limit to prevent infinite loops
-            if (page > 100) {
-              core.setFailed('PR has too many changed files');
-              break;
+            if (files.length === 0) {
+              core.setFailed('No files changed');
+              return;
             }
-          }
 
-          console.log(`Found ${allFiles.length} changed files`);
+            if (files.length > 1) {
+              core.setFailed(`Multiple files changed (${files.length}). Only one submission file allowed.`);
+              return;
+            }
 
-          // Return for use in later steps
-          return {
-            files: allFiles,
-            count: allFiles.length
-          };
+            const file = files[0];
+            console.log('Changed file:', file.filename);
+            console.log('Status:', file.status);
 
-      # ============================================================
-      # STEP 5: Validate PR change scope
-      # ============================================================
-      # Security policy for M3:
-      # - New submissions: exactly ONE added submission YAML file
-      # - No modifications to tooling, registry, workflows, etc.
-      # - File must be submissions/<slug>.yaml or submissions/<slug>.yml
-      - name: Validate PR scope
-        id: validate-scope
-        env:
-          CHANGED_FILES_JSON: ${{ steps.changed-files.outputs.result }}
-        run: |
-          CHANGED_FILES='${{ env.CHANGED_FILES_JSON }}'
+            // Validate scope
+            if (!file.filename.startsWith('submissions/')) {
+              core.setFailed(`File must be in submissions/: ${file.filename}`);
+              return;
+            }
 
-          # Parse the JSON
-          FILE_COUNT=$(echo "$CHANGED_FILES" | jq '.count')
-          echo "Total changed files: $FILE_COUNT"
+            if (!file.filename.match(/\.ya?ml$/)) {
+              core.setFailed(`File must be YAML: ${file.filename}`);
+              return;
+            }
 
-          # Must have exactly one file
-          if [ "$FILE_COUNT" -eq 0 ]; then
-            echo "ERROR: No files changed"
-            echo "PR scope validation FAILED"
-            exit 1
-          fi
+            core.setOutput('filename', file.filename);
+            core.setOutput('status', file.status);
 
-          if [ "$FILE_COUNT" -gt 1 ]; then
-            echo "ERROR: Multiple files changed ($FILE_COUNT files)"
-            echo "Only one submission file per PR is allowed"
-            echo ""
-            echo "Changed files:"
-            echo "$CHANGED_FILES" | jq -r '.files[] | "  \(.status): \(.filename)"'
-            echo "PR scope validation FAILED"
-            exit 1
-          fi
-
-          # Get the single file info
-          FILE_INFO=$(echo "$CHANGED_FILES" | jq '.files[0]')
-          FILENAME=$(echo "$FILE_INFO" | jq -r '.filename')
-          STATUS=$(echo "$FILE_INFO" | jq -r '.status')
-
-          echo "Changed file: $STATUS $FILENAME"
-
-          # Must be 'added'
-          if [ "$STATUS" != "added" ]; then
-            echo "ERROR: Only 'added' files are allowed, got '$STATUS'"
-            echo "PR scope validation FAILED"
-            exit 1
-          fi
-
-          # Must be under submissions/
-          if ! echo "$FILENAME" | grep -q "^submissions/"; then
-            echo "ERROR: File must be under submissions/: $FILENAME"
-            echo "PR scope validation FAILED"
-            exit 1
-          fi
-
-          # Must be a YAML file
-          if ! echo "$FILENAME" | grep -q '\.ya\?ml$'; then
-            echo "ERROR: File must be .yaml or .yml: $FILENAME"
-            echo "PR scope validation FAILED"
-            exit 1
-          fi
-
-          # Cannot modify critical paths (defense in depth)
-          case "$FILENAME" in
-            src/*|.github/*|registry/*|schemas/*|package.json|package-lock.json|CLAUDE.md)
-              echo "ERROR: Cannot modify critical file: $FILENAME"
-              echo "PR scope validation FAILED"
-              exit 1
-              ;;
-          esac
-
-          echo "PR scope validation PASSED"
-          echo "SUBMISSION_FILE=$FILENAME" >> $GITHUB_ENV
-
-      # ============================================================
-      # STEP 6: Fetch submission file content from PR HEAD SHA
-      # ============================================================
-      # SECURITY: Fetch the actual file content from PR HEAD, not the .patch
-      # The .patch is a unified diff, NOT the file content
-      - name: Fetch submission file content
+      - name: Fetch submission content
         id: fetch-content
         env:
-          PR_HEAD_SHA: ${{ env.PR_HEAD_SHA }}
-          SUBMISSION_FILE: ${{ env.SUBMISSION_FILE }}
+          PR_HEAD_SHA: ${{ steps.changed-files.outputs.PR_HEAD_SHA }}
         run: |
-          # Validate we have the required variables
-          if [ -z "$PR_HEAD_SHA" ]; then
-            echo "ERROR: PR_HEAD_SHA is not set"
+          FILENAME="${{ steps.changed-files.outputs.filename }}"
+
+          echo "Fetching $FILENAME from SHA: $PR_HEAD_SHA"
+
+          # Use GitHub API to get file content
+          gh api repos/${{ github.repository }}/contents/$FILENAME \
+            --ref "$PR_HEAD_SHA" \
+            --jq '.content' > content_b64.txt
+
+          if [ ! -s content_b64.txt ]; then
+            echo "ERROR: Could not fetch file content"
             exit 1
           fi
 
-          if [ -z "$SUBMISSION_FILE" ]; then
-            echo "ERROR: SUBMISSION_FILE is not set"
-            exit 1
-          fi
-
-          echo "Fetching $SUBMISSION_FILE from PR HEAD SHA: $PR_HEAD_SHA"
-
-          # Use GitHub API to get file content at exact SHA
-          # The API returns base64-encoded content
-          API_RESPONSE=$(gh api "repos/${{ github.repository }}/contents/$SUBMISSION_FILE" \
-            --jq '.content' \
-            --header "Accept: application/vnd.github.v3+json" \
-            2>&1)
-
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to fetch file content from PR HEAD"
-            echo "$API_RESPONSE"
-            exit 1
-          fi
-
-          # Check if we got empty content
-          if [ -z "$API_RESPONSE" ] || [ "$API_RESPONSE" = "null" ]; then
-            echo "ERROR: File not found at PR HEAD SHA"
-            exit 1
-          fi
-
-          # Decode base64 content
-          # Remove newlines from base64 string first
-          CLEAN_CONTENT=$(echo "$API_RESPONSE" | tr -d '\n')
-          FILE_CONTENT=$(echo "$CLEAN_CONTENT" | base64 -d 2>&1)
-
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Failed to decode file content"
-            exit 1
-          fi
-
-          # Validate content is not empty
-          if [ -z "$FILE_CONTENT" ]; then
-            echo "ERROR: File content is empty"
-            exit 1
-          fi
-
-          # Basic size check (reasonable limit for submission files)
-          CONTENT_SIZE=${#FILE_CONTENT}
-          if [ "$CONTENT_SIZE" -gt 65536 ]; then
-            echo "ERROR: Submission file exceeds maximum size (64KB)"
-            exit 1
-          fi
-
-          # Write to local submissions directory
+          # Decode and save
           mkdir -p submissions
-          echo "$FILE_CONTENT" > "submissions/$(basename $SUBMISSION_FILE)"
+          tr -d '\n' < content_b64.txt | base64 -d > "submissions/submission.yaml"
 
-          echo "Successfully fetched submission file"
           echo "Content preview:"
-          head -10 "submissions/$(basename $SUBMISSION_FILE)"
+          head -10 submissions/submission.yaml
 
-      # ============================================================
-      # STEP 7: Run submission inspection
-      # ============================================================
-      # This uses the TRUSTED codebase's submission inspector
-      # The inspection tool is from the base branch, not from the PR
-      # Only the submission file content comes from the PR HEAD
-      - name: Inspect submission
+      - name: Run inspection
         id: inspect
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Find the submission file
-          SUBMISSION_FILE=$(ls submissions/*.yaml submissions/*.yml 2>/dev/null | head -1)
+          FILE="submissions/submission.yaml"
 
-          if [ -z "$SUBMISSION_FILE" ]; then
-            echo "ERROR: No submission file found"
+          echo "=== Running submission inspection ==="
+
+          if npm run submission:inspect -- "$FILE"; then
+            echo "INSPECTION_RESULT=success" >> $GITHUB_OUTPUT
+          else
+            echo "INSPECTION_RESULT=failed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post PR comment
+        if: always()
+        run: |
+          RESULT="${{ steps.inspect.outputs.INSPECTION_RESULT }}"
+          FILENAME="${{ steps.changed-files.outputs.filename }}"
+          AUTHOR="${{ steps.pr-meta.outputs.PR_AUTHOR }}"
+          PR_NUM="${{ steps.pr-meta.outputs.PR_NUMBER }}"
+
+          if [ "$RESULT" = "success" ]; then
+            EMOJI="✅"
+            TITLE="Inspection Passed"
+          else
+            EMOJI="❌"
+            TITLE="Inspection Failed"
+          fi
+
+          gh pr comment "$PR_NUM" --repo "$GITHUB_REPOSITORY" --body "${EMOJI} ${TITLE}
+
+          File: \`${FILENAME}\`
+          Author: @${AUTHOR}
+
+          ---
+
+          **Automated check by Axolotl Plugin Repository**"
+
+          if [ "$RESULT" != "success" ]; then
             exit 1
           fi
-
-          echo "Inspecting submission: $SUBMISSION_FILE"
-          echo ""
-
-          # Run the inspection
-          if npm run submission:inspect -- "$SUBMISSION_FILE"; then
-            echo ""
-            echo "INSPECTION_RESULT=success" >> $GITHUB_ENV
-            echo "::notice title=Submission Check::Inspection passed - Ready for human review"
-          else
-            EXIT_CODE=$?
-            echo ""
-            echo "INSPECTION_RESULT=failed" >> $GITHUB_ENV
-            echo "::error title=Submission Check::Inspection found issues - see logs for details"
-            exit $EXIT_CODE
-          fi
-
-      # ============================================================
-      # STEP 8: Report results
-      # ============================================================
-      # Results are reported via workflow job conclusion
-      # No PR comments or check runs needed (would require write permissions)
-      - name: Report results
-        if: always()
-        env:
-          INSPECTION_RESULT: ${{ env.INSPECTION_RESULT || 'failed' }}
-        run: |
-          echo "=== Submission Check Results ==="
-          echo "Result: $INSPECTION_RESULT"
-          echo ""
-          echo "The workflow job conclusion reflects the inspection result:"
-          echo "  - success: inspection passed"
-          echo "  - failure: inspection found issues"
-          echo ""
-          echo "For detailed results, see the workflow run logs."

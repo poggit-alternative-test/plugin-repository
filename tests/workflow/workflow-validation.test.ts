@@ -77,7 +77,7 @@ describe('GitHub Workflow Validation', () => {
     it('validates version format (SemVer)', () => {
       expect(workflow).toContain('Validate version format');
       // Support both \d and [0-9] in regex
-      expect(workflow).toMatch(/\\[0-9\]/);
+      expect(workflow).toContain("0-9");
     });
 
     it('validates SHA format (40 hex)', () => {

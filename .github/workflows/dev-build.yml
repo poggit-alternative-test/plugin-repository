@@ -26,7 +26,6 @@ on:
         default: ''
 
 env:
-  PLUGIN_NAME: ${{ github.event.repository.name }}
   PHP_VERSION: '8.2'
 
 jobs:
@@ -54,41 +53,61 @@ jobs:
           php-version: ${{ env.PHP_VERSION }}
           extensions: zip, phar
 
+      - name: Get plugin name from plugin.yml
+        id: plugin-name
+        run: |
+          if [ -f plugin.yml ]; then
+            PLUGIN_NAME=$(grep -E "^name:" plugin.yml | sed 's/name:\s*//' | tr -d '"' | tr -d "'" | tr -d '[:space:]')
+            echo "plugin_name=${PLUGIN_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "plugin_name=${GITHUB_REPOSITORY##*/}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Get plugin version from plugin.yml
         id: version
         run: |
-          VERSION=$(grep -E "^version:\s*" plugin.yml | sed 's/version:\s*//' | tr -d '"' | tr -d "'")
-          if [ -z "$VERSION" ]; then
-            echo "version=snapshot" >> $GITHUB_OUTPUT
+          if [ -f plugin.yml ]; then
+            VERSION=$(grep -E "^version:" plugin.yml | sed 's/version:\s*//' | tr -d '"' | tr -d "'" | tr -d '[:space:]')
           else
-            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            VERSION="snapshot"
           fi
+          if [ -z "$VERSION" ]; then
+            VERSION="snapshot"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Setup variables
         id: vars
         run: |
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          PLUGIN_NAME="${{ steps.plugin-name.outputs.plugin_name }}"
+          if [ -z "$PLUGIN_NAME" ]; then
+            PLUGIN_NAME="${GITHUB_REPOSITORY##*/}"
+          fi
+
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
           SHA_SHORT=${GITHUB_SHA:0:8}
-          VERSION=${{ steps.version.outputs.version }}
+          VERSION="${{ steps.version.outputs.version }}"
 
           # Use custom version if provided
           if [ -n "${{ inputs.version_override }}" ]; then
-            VERSION=${{ inputs.version_override }}
+            VERSION="${{ inputs.version_override }}"
           fi
 
-          DEV_VERSION="${VERSION}-dev.${TIMESTAMP}"
+          DEV_VERSION="${VERSION}-dev.${SHA_SHORT}"
+          TAG_NAME="dev-${SHA_SHORT}"
 
+          echo "plugin_name=${PLUGIN_NAME}" >> $GITHUB_OUTPUT
           echo "dev_version=${DEV_VERSION}" >> $GITHUB_OUTPUT
-          echo "tag_name=dev/${SHA_SHORT}" >> $GITHUB_OUTPUT
-          echo "timestamp=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "phar_name=${PLUGIN_NAME}-dev.phar" >> $GITHUB_OUTPUT
 
       # ------------------------------------------------------------------------
       # Install Dependencies
       # ------------------------------------------------------------------------
       - name: Install Composer dependencies
-        if: file_exists('composer.json')
+        if: hashFiles('composer.json') != ''
         run: |
-          composer install --no-dev --prefer-dist --optimize-autoloader
+          composer install --no-dev --prefer-dist --optimize-autoloader || true
         env:
           COMPOSER_AUTH: ${{ secrets.COMPOSER_AUTH }}
 
@@ -96,25 +115,16 @@ jobs:
       # Download Pharynx
       # ------------------------------------------------------------------------
       - name: Download Pharynx PHAR Builder
+        id: pharynx
         run: |
           mkdir -p .build
 
-          # Try to download from releases
-          curl -sL -o .build/pharynx.phar \
-            "https://github.com/poggit/Pharynx/releases/latest/download/pharynx.phar" \
-            || curl -sL -o .build/pharynx.phar \
+          # Try primary source first, then fallback
+          curl -sL --fail --max-time 30 \
+            -o .build/pharynx.phar \
             "https://github.com/SOF3/Pharynx/releases/latest/download/pharynx.phar" \
-            || echo "Pharynx download failed - using stub build"
-
-      - name: Fallback: Simple PHAR creation
-        if: false  # Enable if pharynx download fails
-        run: |
-          # Create a simple PHAR stub if pharynx not available
-          echo "Creating basic PHAR structure"
-          mkdir -p .build/temp_plugin
-          cp -r src .build/temp_plugin/
-          cp plugin.yml .build/temp_plugin/
-          ls -la .build/temp_plugin/
+            && echo "pharynx_status=downloaded" >> $GITHUB_OUTPUT \
+            || echo "pharynx_status=fallback" >> $GITHUB_OUTPUT
 
       # ------------------------------------------------------------------------
       # Build PHAR
@@ -122,39 +132,65 @@ jobs:
       - name: Build PHAR with Pharynx
         id: build
         run: |
-          PHAR_NAME="${PLUGIN_NAME}-dev.phar"
-          OUTPUT_DIR=".build"
+          PLUGIN_NAME="${{ steps.vars.outputs.plugin_name }}"
+          DEV_VERSION="${{ steps.vars.outputs.dev_version }}"
+          PHAR_NAME="${{ steps.vars.outputs.phar_name }}"
 
-          # Try pharynx build
-          if [ -f .build/pharynx.phar ]; then
-            php .build/pharynx.phar \
-              -i . \
-              -o "${OUTPUT_DIR}" \
-              -p="${PHAR_NAME}" \
-              ${COMPOSER_MODE:+-c} \
-              2>&1 || echo "Pharynx build failed, trying fallback"
+          echo "=== Building ${PHAR_NAME} ==="
+          echo "Version: ${DEV_VERSION}"
+
+          # Determine build method
+          if [ "${{ steps.pharynx.outputs.pharynx_status }}" = "downloaded" ] && [ -f .build/pharynx.phar ]; then
+            echo "Building with Pharynx..."
+
+            # Check if composer.json exists for composer mode
+            if [ -f composer.json ]; then
+              php .build/pharynx.phar \
+                -i . \
+                -o .build \
+                -p="${PHAR_NAME}" \
+                -c \
+                2>&1 || echo "Composer mode failed, trying without..."
+            fi
+
+            # Try without composer mode if -c failed
+            if [ ! -f ".build/${PHAR_NAME}" ]; then
+              php .build/pharynx.phar \
+                -i . \
+                -o .build \
+                -p="${PHAR_NAME}" \
+                2>&1 || echo "Pharynx build failed"
+            fi
+          else
+            echo "Pharynx not available, creating stub PHAR..."
           fi
 
-          # Fallback: Copy plugin files to PHAR-like structure
+          # Fallback: Create a simple PHAR stub if Pharynx failed
           if [ ! -f ".build/${PHAR_NAME}" ]; then
-            echo "Using fallback build method"
-            mkdir -p ".build/plugin_temp"
-            cp -r src .build/plugin_temp/ 2>/dev/null || true
-            cp plugin.yml .build/plugin_temp/ 2>/dev/null || true
+            echo "Creating stub PHAR..."
+            mkdir -p ".build/stub-plugin"
+            cp -r src ".build/stub-plugin/" 2>/dev/null || mkdir -p ".build/stub-plugin"
+            cp plugin.yml ".build/stub-plugin/" 2>/dev/null || true
+
+            # Create minimal PHAR-like archive for testing
             PHAR_NAME="${PLUGIN_NAME}-dev-stub.phar"
           fi
 
-          # Calculate checksums
+          # Final verification
           if [ -f ".build/${PHAR_NAME}" ]; then
-            SHA256=$(sha256sum ".build/${PHAR_NAME}" | cut -d' ' -f1)
-            SIZE=$(stat -c%s ".build/${PHAR_NAME}")
+            SHA256=$(sha256sum ".build/${PHAR_NAME}" | awk '{print $1}')
+            SIZE=$(wc -c < ".build/${PHAR_NAME}")
 
             echo "phar_path=.build/${PHAR_NAME}" >> $GITHUB_OUTPUT
             echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
             echo "size_bytes=${SIZE}" >> $GITHUB_OUTPUT
-            echo "plugin_version=${{ steps.vars.outputs.dev_version }}" >> $GITHUB_OUTPUT
+            echo "plugin_version=${DEV_VERSION}" >> $GITHUB_OUTPUT
+
+            echo "Build successful: ${PHAR_NAME}"
+            echo "SHA-256: ${SHA256}"
+            echo "Size: ${SIZE} bytes"
           else
-            echo "Build output not found"
+            echo "ERROR: No PHAR file created"
             exit 1
           fi
 
@@ -164,10 +200,16 @@ jobs:
       - name: Generate checksums
         run: |
           cd .build
-          echo "# Checksums for ${{ steps.vars.outputs.dev_version }}" > checksums.txt
-          echo "" >> checksums.txt
+          {
+            echo "# Checksums for ${{ steps.vars.outputs.dev_version }}"
+            echo "# Built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+          } > checksums.txt
+
           for f in *.phar; do
-            echo "$(sha256sum "$f" | cut -d' ' -f1)  $f" >> checksums.txt
+            if [ -f "$f" ]; then
+              echo "$(sha256sum "$f" | cut -d' ' -f1)  $f" >> checksums.txt
+            fi
           done
           cat checksums.txt
 
@@ -178,13 +220,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag_name }}
-          name: "Dev Build ${{ steps.vars.outputs.timestamp }}"
+          name: "Dev Build - ${{ steps.vars.outputs.dev_version }}"
           body: |
-            ## Dev Build - ${{ steps.vars.outputs.dev_version }}
+            ## Dev Build - ${{ steps.vars.outputs.plugin_version }}
 
             **Commit:** `${{ github.sha }}`
             **Branch:** `${{ github.ref_name }}`
-            **Built:** `${{ steps.vars.outputs.plugin_version }}`
+            **Built:** `{{ steps.build.outputs.plugin_version }}`
 
             ### SHA-256
             ```
@@ -192,7 +234,7 @@ jobs:
             ```
 
             ### Files
-            - PHAR: `{{ steps.build.outputs.phar_path }}`
+            - PHAR: `${{ steps.build.outputs.phar_path }}`
             - Size: `${{ steps.build.outputs.size_bytes }}` bytes
 
             ---
@@ -211,31 +253,17 @@ jobs:
       - name: Notify Plugin Registry
         if: success()
         run: |
-          # This would call the GitHub App webhook endpoint
-          # For POC, we'll just log the event
+          echo "Dev build completed successfully!"
+          echo ""
+          echo "Tag: ${{ steps.vars.outputs.tag_name }}"
+          echo "Version: ${{ steps.build.outputs.plugin_version }}"
+          echo "SHA-256: ${{ steps.build.outputs.sha256 }}"
 
-          EVENT_DATA=$(cat <<EOF
-          {
-            "event": "dev_build",
-            "repository": "${{ github.repository }}",
-            "sha": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}",
-            "tag": "${{ steps.vars.outputs.tag_name }}",
-            "version": "${{ steps.vars.outputs.dev_version }}",
-            "sha256": "${{ steps.build.outputs.sha256 }}",
-            "build_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          }
-          EOF
-          )
-
-          echo "Dev build completed!"
-          echo "Event data: ${EVENT_DATA}"
-
-          # Uncomment to send webhook:
+          # Uncomment to send webhook notification:
           # curl -X POST ${{ secrets.PLUGIN_REGISTRY_WEBHOOK_URL }} \
           #   -H "Content-Type: application/json" \
           #   -H "X-Webhook-Secret: ${{ secrets.WEBHOOK_SECRET }}" \
-          #   -d "${EVENT_DATA}"
+          #   -d "{\"event\":\"dev_build\",\"repository\":\"${{ github.repository }}\",\"sha\":\"${{ github.sha }}\",\"tag\":\"${{ steps.vars.outputs.tag_name }}\",\"version\":\"${{ steps.build.outputs.plugin_version }}\"}"
 
       # ------------------------------------------------------------------------
       # Summary
@@ -246,10 +274,12 @@ jobs:
           echo ""
           echo "| Property | Value |"
           echo "|----------|-------|"
-          echo "| Version | ${{ steps.vars.outputs.dev_version }} |"
-          echo "| Tag | ${{ steps.vars.outputs.tag_name }} |"
+          echo "| Plugin | ${{ steps.vars.outputs.plugin_name }} |"
+          echo "| Version | ${{ steps.build.outputs.plugin_version }} |"
+          echo "| Tag | \`${{ steps.vars.outputs.tag_name }}\` |"
           echo "| SHA-256 | \`${{ steps.build.outputs.sha256 }}\` |"
           echo "| Size | ${{ steps.build.outputs.size_bytes }} bytes |"
           echo "| Commit | \`${{ github.sha }}\` |"
+          echo "| Branch | \`${{ github.ref_name }}\` |"
           echo ""
           echo "Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.vars.outputs.tag_name }}"
