@@ -1,0 +1,5 @@
+schema_version: 1
+
+upstream:
+  repository: nicholass003/LittleBrother
+  branch: stable
