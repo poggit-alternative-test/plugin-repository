@@ -38,6 +38,7 @@ import {
   type PublishToRegistryResult,
 } from '../registry/writer.js';
 import type { VersionRecord } from '../registry/types.js';
+import type { PublishToReleaseResult } from '../publication/publication-service.js';
 
 // ============================================================
 // Argument Parsing
@@ -59,21 +60,6 @@ function fail(message: string): never {
 
 function warn(message: string): void {
   console.warn(`WARNING: ${message}`);
-}
-
-// ============================================================
-// Version Record Schema Types
-// ============================================================
-
-interface PublicationResult {
-  success: boolean;
-  release?: {
-    tagName: string;
-    htmlUrl?: string;
-  };
-  assets?: Array<{ name: string; contentType?: string }>;
-  publishedAt?: string;
-  diagnostics?: Array<{ code: string; severity?: string; message?: string; context?: Record<string, unknown> }>;
 }
 
 // ============================================================
@@ -143,26 +129,23 @@ function loadConfig(): UpdateConfig {
   };
 }
 
-function buildPublicationResult(config: UpdateConfig): PublicationResult {
+function buildPublicationResult(config: UpdateConfig): PublishToReleaseResult {
   return {
     success: true,
     release: {
+      id: 0,  // Not available in CLI context
       tagName: config.releaseTag,
+      name: `${config.pluginId} ${config.version}`,
+      htmlUrl: '',  // Not available in CLI context
+      draft: false,
     },
     assets: [
-      { name: config.pharFile, contentType: 'application/octet-stream' },
-      { name: 'checksums.txt', contentType: 'text/plain' },
-      { name: 'metadata.json', contentType: 'application/json' },
+      { name: config.pharFile, contentType: 'application/octet-stream', size: 0 },
+      { name: 'checksums.txt', contentType: 'text/plain', size: 0 },
+      { name: 'metadata.json', contentType: 'application/json', size: 0 },
     ],
     publishedAt: config.publishedAt,
-    diagnostics: [
-      {
-        code: 'ASSET_UPLOADED',
-        severity: 'info',
-        message: `Uploaded PHAR: ${config.pharFile}`,
-        context: { sha256: config.sha256 },
-      },
-    ],
+    diagnostics: [],
   };
 }
 

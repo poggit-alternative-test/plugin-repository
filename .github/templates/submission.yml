@@ -1,0 +1,157 @@
+# =============================================================================
+# PLUGIN SUBMISSION TEMPLATE
+# =============================================================================
+# Copy this file to your repository as:
+#   .github/ISSUE_TEMPLATES/plugin-submission.yml
+#
+# OR use this content when creating a new Issue on the plugin-registry repo
+# =============================================================================
+
+name: Plugin Submission
+description: Submit a plugin for review to the Axolotl Plugin Repository
+title: "[SUBMIT] "
+labels: ["submission", "plugin-submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🎯 Plugin Submission
+
+        Welcome to the Axolotl Plugin Repository! Please fill out this form
+        to submit your plugin for review.
+
+        ## 📋 Requirements
+
+        Before submitting, ensure your plugin meets these requirements:
+
+        - ✅ Public GitHub repository
+        - ✅ Valid `plugin.yml` in repository root
+        - ✅ No malicious code
+        - ✅ Not archived/disabled
+        - ✅ Follows PocketMine-MP plugin standards
+
+  - type: input
+    id: plugin-name
+    attributes:
+      label: Plugin Name
+      description: Exact name from your plugin.yml (e.g., "TopStats")
+      placeholder: "e.g., TopStats"
+    validations:
+      required: true
+
+  - type: input
+    id: repository
+    attributes:
+      label: GitHub Repository
+      description: Your plugin repository in format "owner/repo"
+      placeholder: "e.g., nicholass003/TopStats"
+    validations:
+      required: true
+
+  - type: input
+    id: branch
+    attributes:
+      label: Release Branch
+      description: Branch to use for review (usually main/master)
+      placeholder: "e.g., main"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Version number from plugin.yml (must match a release tag)
+      placeholder: "e.g., 1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: api-version
+    attributes:
+      label: API Version
+      description: PocketMine-MP API version (e.g., 5.0.0)
+      placeholder: "e.g., 5.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Brief description of your plugin
+      placeholder: "A short description of what your plugin does..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: features
+    attributes:
+      label: Features
+      description: Key features of your plugin
+      placeholder: |
+        - Feature 1
+        - Feature 2
+        - Feature 3
+
+  - type: textarea
+    id: changelog
+    attributes:
+      label: Changelog
+      description: What's new in this version
+      placeholder: |
+        ## Version X.Y.Z
+        - Added feature A
+        - Fixed bug B
+        - Improved performance
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Dependencies / Requirements
+      description: Any required plugins or dependencies
+      placeholder: "None" # leave empty or list dependencies
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: "My plugin repository is public"
+          required: true
+        - label: "plugin.yml is valid and in repository root"
+          required: true
+        - label: "No malicious code or backdoors"
+          required: true
+        - label: "I am the plugin author or have permission to distribute"
+          required: true
+        - label: "Repository is not archived"
+          required: true
+
+  - type: textarea
+    id: additional-info
+    attributes:
+      label: Additional Information
+      description: Anything else reviewers should know?
+      placeholder: "Optional additional information..."
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        ## 🔍 Review Process
+
+        1. **Automated Checks** - We verify your plugin.yml and basic structure
+        2. **Security Scan** - Automated malware/security detection
+        3. **Human Review** - Our team reviews the code
+        4. **Approval/Rejection** - You'll be notified of the decision
+
+        ## ⏱️ Timeline
+
+        - Automated checks: ~5 minutes
+        - Human review: 1-7 days (depending on queue)
+
+        ## ❓ Questions?
+
+        Join our [Discord community](https://discord.gg/example) or open a discussion.

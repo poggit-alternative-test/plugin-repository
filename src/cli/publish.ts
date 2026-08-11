@@ -108,7 +108,7 @@ function loadGitHubAppCredentials(): GitHubAppCredentials | null {
 async function getInstallationToken(credentials: GitHubAppCredentials): Promise<string> {
   const auth = new GitHubAppAuth({
     appId: credentials.appId,
-    privateKey: credentials.privateKey,
+    privateKeyContent: credentials.privateKey,
   });
 
   // Get installation ID
@@ -128,7 +128,7 @@ async function getInstallationToken(credentials: GitHubAppCredentials): Promise<
   }
 
   // Get installation token
-  const token = await auth.createInstallationToken(parseInt(installationId, 10));
+  const token = await auth.getAccessToken(installationId);
   return token;
 }
 
@@ -216,11 +216,17 @@ async function publish(): Promise<void> {
   const token = await getInstallationToken(credentials);
   config.githubToken = token;
 
+  // Set token in environment for createGitHubPublicationProvider
+  process.env.GITHUB_TOKEN = token;
+
   // Create the GitHub publication provider
   const provider = createGitHubPublicationProvider({
-    token,
     apiBaseUrl: config.apiUrl,
   });
+
+  if (!provider) {
+    fail('Failed to create GitHub provider. Check GITHUB_TOKEN environment variable.');
+  }
 
   if (!provider.isWriteEnabled()) {
     fail('GitHub provider is not write-enabled.');

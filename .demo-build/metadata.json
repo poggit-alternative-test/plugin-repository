@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "plugin_name": "ExamplePlugin",
+  "version": "1.0.0",
+  "api_version": "5.0.0",
+  "author": "Developer Name",
+  "built_at": "2026-08-11T17:06:30.077Z",
+  "source_sha256": "2b1da3a09039f5e02bb9c34fde6d09de23729f272ad0f92983a8aedf76bae65c",
+  "repository": "developer/example-plugin",
+  "commit": "abc1234def567890abc1234def567890abc1234"
+}

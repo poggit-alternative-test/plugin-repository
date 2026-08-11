@@ -1,0 +1,5 @@
+schema_version: 1
+
+upstream:
+  repository: PocketMine-PL/Example-Plugin
+  branch: main

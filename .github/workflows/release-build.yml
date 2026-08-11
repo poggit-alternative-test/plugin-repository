@@ -1,0 +1,286 @@
+# =============================================================================
+# RELEASE BUILD WORKFLOW
+# =============================================================================
+# Auto-triggered when a version tag (v*.*.*) is pushed
+# Creates a proper release for the plugin repository
+#
+# SETUP: Developer copies this to their .github/workflows/axolotl-release.yml
+#
+# =============================================================================
+
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  PHP_VERSION: '8.2'
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Stage 1: Validation
+  # --------------------------------------------------------------------------
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      is_prerelease: ${{ steps.extract.outputs.is_prerelease }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: extract
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          # Check if prerelease
+          if [[ "${VERSION}" == *"-"* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate plugin.yml
+        run: |
+          if [ ! -f plugin.yml ]; then
+            echo "ERROR: plugin.yml not found"
+            exit 1
+          fi
+
+          echo "=== plugin.yml validation ==="
+          grep -E "^name:\s*" plugin.yml || echo "WARNING: name not found"
+          grep -E "^version:\s*" plugin.yml || echo "WARNING: version not found"
+          grep -E "^api:\s*" plugin.yml || echo "WARNING: api version not found"
+          grep -E "^main:\s*" plugin.yml || echo "WARNING: main class not found"
+
+          # Check if version matches tag
+          PLUGIN_VERSION=$(grep -E "^version:\s*" plugin.yml | sed 's/version:\s*//' | tr -d '"' | tr -d "'" | tr -d ' ')
+          TAG_VERSION="${VERSION#v}"
+
+          if [ "${PLUGIN_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "WARNING: plugin.yml version (${PLUGIN_VERSION}) doesn't match tag (${TAG_VERSION})"
+          fi
+
+  # --------------------------------------------------------------------------
+  # Stage 2: Build
+  # --------------------------------------------------------------------------
+  build:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      phar_path: ${{ steps.build.outputs.phar_path }}
+      sha256: ${{ steps.build.outputs.sha256 }}
+      size_bytes: ${{ steps.build.outputs.size_bytes }}
+      version: ${{ needs.validate.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: zip, phar
+
+      - name: Get plugin info
+        id: plugin_info
+        run: |
+          NAME=$(grep -E "^name:\s*" plugin.yml | sed 's/name:\s*//' | tr -d '"' | tr -d "'")
+          VERSION=$(grep -E "^version:\s*" plugin.yml | sed 's/version:\s*//' | tr -d '"' | tr -d "'")
+          API=$(grep -E "^api:\s*" plugin.yml | sed 's/api:\s*//' | tr -d '"' | tr -d "'")
+          AUTHOR=$(grep -E "^author:\s*" plugin.yml | sed 's/author:\s*//' | tr -d '"' | tr -d "'")
+
+          echo "plugin_name=${NAME}" >> $GITHUB_OUTPUT
+          echo "plugin_version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "plugin_api=${API}" >> $GITHUB_OUTPUT
+          echo "plugin_author=${AUTHOR}" >> $GITHUB_OUTPUT
+
+      - name: Install Composer dependencies
+        if: file_exists('composer.json')
+        run: |
+          composer install --no-dev --prefer-dist --optimize-autoloader
+
+      - name: Download Pharynx
+        run: |
+          mkdir -p .build
+
+          # Try multiple sources for pharynx
+          curl -sL -o .build/pharynx.phar \
+            "https://github.com/SOF3/Pharynx/releases/latest/download/pharynx.phar" \
+            || echo "Using fallback build"
+
+      - name: Build PHAR
+        id: build
+        run: |
+          PLUGIN_NAME="${{ steps.plugin_info.outputs.plugin_name }}"
+          VERSION="${{ needs.validate.outputs.version }}"
+          PHAR_NAME="${PLUGIN_NAME}-${VERSION#v}.phar"
+
+          echo "Building: ${PHAR_NAME}"
+
+          if [ -f .build/pharynx.phar ]; then
+            php .build/pharynx.phar \
+              -i . \
+              -o ".build" \
+              -p="${PHAR_NAME}" \
+              2>&1
+          fi
+
+          # Verify build output
+          if [ ! -f ".build/${PHAR_NAME}" ]; then
+            echo "ERROR: PHAR build failed"
+            exit 1
+          fi
+
+          # Calculate checksums
+          cd .build
+          SHA256=$(sha256sum "${PHAR_NAME}" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "${PHAR_NAME}")
+
+          echo "phar_path=.build/${PHAR_NAME}" >> $GITHUB_OUTPUT
+          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+          echo "size_bytes=${SIZE}" >> $GITHUB_OUTPUT
+
+          echo "=== Build Complete ==="
+          echo "File: ${PHAR_NAME}"
+          echo "SHA-256: ${SHA256}"
+          echo "Size: ${SIZE} bytes"
+
+      - name: Generate checksums
+        run: |
+          cd .build
+          cat > checksums.txt << 'EOF'
+          # SHA-256 checksums for ${{ needs.validate.outputs.version }}
+          # Generated by Axolotl Plugin Repository
+          #
+          EOF
+
+          for f in *.phar; do
+            echo "$(sha256sum "$f" | cut -d' ' -f1)  $f" >> checksums.txt
+          done
+
+          cat checksums.txt
+
+      - name: Generate metadata.json
+        run: |
+          cd .build
+          cat > metadata.json << EOF
+          {
+            "schema_version": 1,
+            "plugin_name": "${{ steps.plugin_info.outputs.plugin_name }}",
+            "version": "${{ needs.validate.outputs.version }}",
+            "api_version": "${{ steps.plugin_info.outputs.plugin_api }}",
+            "author": "${{ steps.plugin_info.outputs.plugin_author }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "source_sha256": "${{ steps.build.outputs.sha256 }}",
+            "repository": "${{ github.repository }}",
+            "commit": "${{ github.sha }}"
+          }
+          EOF
+
+          cat metadata.json
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ needs.validate.outputs.version }}
+          path: .build/
+          retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # Stage 3: Publish Release
+  # --------------------------------------------------------------------------
+  publish:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts-${{ needs.validate.outputs.version }}
+          path: .build
+
+      - name: Checkout for changelog
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          TAG_NAME="v${VERSION#v}"
+
+          # Try to get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          echo "=== Release Notes for ${VERSION} ==="
+
+          cat > release_notes.md << 'RELEASENOTES'
+          # Release ${{ needs.validate.outputs.version }}
+
+          ${{ steps.plugin_info.outputs.plugin_name }} ${{ needs.validate.outputs.version }}
+
+          ## Downloads
+
+          | File | SHA-256 |
+          |------|---------|
+          | PHAR | \`${{ needs.build.outputs.sha256 }}\` |
+          | checksums.txt | [View](checksums.txt) |
+          | metadata.json | [View](metadata.json) |
+
+          ## Installation
+
+          Download the `.phar` file and place it in your server's `plugins/` folder.
+
+          ## System Requirements
+
+          - PocketMine-MP API: ${{ steps.plugin_info.outputs.plugin_api }}
+          - PHP: ${{ env.PHP_VERSION }}+
+
+          ---
+          *Built automatically by [Axolotl Plugin Repository](https://github.com/axolotl-pm)*
+
+          RELEASENOTES
+
+          cat release_notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: "${{ steps.plugin_info.outputs.plugin_name }} ${{ needs.validate.outputs.version }}"
+          body_path: release_notes.md
+          files: |
+            .build/*.phar
+            .build/checksums.txt
+            .build/metadata.json
+          draft: false
+          prerelease: ${{ needs.validate.outputs.is_prerelease }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Success notification
+        run: |
+          echo "🎉 Release ${{ needs.validate.outputs.version }} published successfully!"
+          echo ""
+          echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.version }}"
+          echo "Download: https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.version }}/${{ steps.plugin_info.outputs.plugin_name }}-${{ needs.validate.outputs.version }}.phar"

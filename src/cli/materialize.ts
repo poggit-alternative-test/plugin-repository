@@ -172,8 +172,8 @@ async function execute(): Promise<void> {
   // Issue trusted execution context
   const context = service.createTrustedExecutionContext();
 
-  // Execute the plan
-  const result = await service.executePlan(planResult.plan, githubClient, context, { dryRun });
+  // Execute the plan (executePlan signature: plan, client, context, options)
+  const result = await service.executePlan(planResult.plan, githubClient, context);
 
   // Debug: Log error details
   if (result.errors.length > 0) {

@@ -261,7 +261,7 @@ async function buildTrusted(options: {
 
   if (!pluginYmlResult.success) {
     console.error(`[build-trusted] plugin.yml validation failed`);
-    printDiagnostics('validatePluginYml', pluginYmlResult.diagnostics);
+    printDiagnostics('validatePluginYml', pluginYmlResult.diagnostics as BuildDiagnostic[]);
   }
 
   pluginName = pluginYmlResult.metadata?.name ?? pluginName;
@@ -272,10 +272,10 @@ async function buildTrusted(options: {
     message: pluginYmlResult.success
       ? `${pluginName} v${pluginVersion}`
       : 'validation failed',
-    errorCount: getErrors(pluginYmlResult.diagnostics).length,
-    warningCount: getWarnings(pluginYmlResult.diagnostics).length,
+    errorCount: getErrors(pluginYmlResult.diagnostics as BuildDiagnostic[]).length,
+    warningCount: getWarnings(pluginYmlResult.diagnostics as BuildDiagnostic[]).length,
   };
-  allDiagnostics.push(...pluginYmlResult.diagnostics);
+  allDiagnostics.push(...(pluginYmlResult.diagnostics as BuildDiagnostic[]));
 
   if (!pluginYmlResult.success) {
     return createFailureResult(startTime, pluginName, pluginVersion, allDiagnostics, steps);
@@ -287,7 +287,7 @@ async function buildTrusted(options: {
 
   const scanResult = scanForSecuritySignals(absSourcePath);
   const pharScanResult = scanForCommittedPhar(absSourcePath);
-  const scanDiagnostics = [...scanResult.diagnostics, ...pharScanResult.diagnostics];
+  const scanDiagnostics = [...scanResult.diagnostics, ...pharScanResult.diagnostics] as BuildDiagnostic[];
 
   const scanErrorCount = getErrors(scanDiagnostics).length;
   const scanWarningCount = getWarnings(scanDiagnostics).length;

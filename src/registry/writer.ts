@@ -165,7 +165,13 @@ export function updateVersionRecordWithPublication(
   }
 
   // Build artifact object with provenance
-  const artifact: Record<string, unknown> = {
+  const artifact: {
+    release_tag: string;
+    file: string;
+    sha256: string;
+    published_at: string;
+    provenance?: { type: 'github-attestation' };
+  } = {
     release_tag: artifactRef.releaseTag,
     file: artifactRef.file,
     sha256: artifactRef.sha256,
@@ -178,7 +184,7 @@ export function updateVersionRecordWithPublication(
   }
 
   // Build updated record
-  const updated: VersionRecordYaml = {
+  const updated = {
     ...existing,
     artifact,
     status: 'published',

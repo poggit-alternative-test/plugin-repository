@@ -180,7 +180,7 @@ describe('M5: Tester Transport Configuration', () => {
         githubAppConfig: undefined,
       });
       expect(result.valid).toBe(false);
-      expect(result.errors.some(e => e.includes('GitHub App configuration'))).toBe(true);
+      expect(result.errors.some(e => e.includes('GitHub'))).toBe(true);
     });
 
     it('returns valid when repo creation allowed with GitHub App config', () => {

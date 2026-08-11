@@ -117,8 +117,8 @@ export interface PharynxRunResult {
   /** Plugin directory used */
   pluginDir: string;
 
-  /** Output directory path (unpacked PHAR contents) */
-  outputDir: string;
+  /** Output directory path (unpacked PHAR contents) - may be undefined if not provided in config */
+  outputDir?: string;
 
   /** Final PHAR file path */
   outputPhar: string;
@@ -391,10 +391,19 @@ export async function runPharynx(
   // ─── Build Environment ───────────────────────────────────
 
   // Build clean environment — NO secrets
-  const env: Record<string, string> = {
-    ...process.env,
-    ...config.env,
-  };
+  // Filter out undefined values from process.env
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+  // Add custom env vars (these should not have undefined values)
+  if (config.env) {
+    for (const [key, value] of Object.entries(config.env)) {
+      env[key] = value;
+    }
+  }
 
   // ─── Build Command Arguments ──────────────────────────────
   //
@@ -670,11 +679,13 @@ export async function runPharynx(
       }
 
       // Clean up the output directory on timeout
-      try {
-        if (existsSync(outputDir)) {
-          rmSync(outputDir, { recursive: true, force: true });
-        }
-      } catch {}
+      if (outputDir) {
+        try {
+          if (existsSync(outputDir)) {
+            rmSync(outputDir, { recursive: true, force: true });
+          }
+        } catch {}
+      }
 
       diagnostics.push(
         infrastructureError(

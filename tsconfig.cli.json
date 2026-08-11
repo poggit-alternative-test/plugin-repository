@@ -1,0 +1,9 @@
+{
+  // CLI tsconfig - includes tools/builder for build-trusted.ts
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "tools/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
