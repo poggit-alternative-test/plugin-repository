@@ -138,6 +138,7 @@ export class MaterializationService {
       if (repo.fullName !== repository || repo.owner.toLowerCase() !== this.storageOwner().toLowerCase() || repo.isArchived) { errors.push(this.error(-1, 'STORAGE_REPOSITORY_INVALID', 'Existing repository does not match trusted storage configuration.')); return finish(false); }
     } else {
       const created = await githubClient.createRepository({ name: repository.split('/')[1], description: `Immutable reviewed source for ${approval.pluginId}`, private: true, owner: this.storageOwner() });
+      console.error("[DEBUG] Create repo result:", JSON.stringify(created));
       if (!created.success && created.error?.code !== 'GITHUB_REPOSITORY_EXISTS') { errors.push(this.error(0, created.error?.code ?? 'GITHUB_CLIENT_ERROR', created.error?.message ?? 'Unable to create storage repository')); return finish(false, false, undefined, executed, 1); }
       const after = await githubClient.getRepository(repository);
       if (!after || after.fullName !== repository || after.owner.toLowerCase() !== this.storageOwner().toLowerCase() || after.isArchived) { errors.push(this.error(0, 'STORAGE_REPOSITORY_INVALID', 'Repository creation/reconciliation did not yield trusted storage identity.')); return finish(false, false, undefined, executed, 1); }
