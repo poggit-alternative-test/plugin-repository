@@ -1,22 +1,9 @@
 {
-  "plugins": [
-    {
-      "id": "ivancraft623-ranksystem",
-      "name": "RankSystem",
-      "summary": "An amazing Rank and Permissions Manager. The best ranks manager for PocketMine-MP.",
-      "latestVersion": "1.2.1",
-      "status": "materialized",
-      "author": "IvanCraft623",
-      "repo": "IvanCraft623/RankSystem",
-      "repoUrl": "https://github.com/IvanCraft623/RankSystem",
-      "downloads": 15,
-      "updatedAt": "2026-08-10T03:03:45Z"
-    }
-  ],
+  "plugins": [],
   "pagination": {
     "page": 1,
     "perPage": 20,
-    "total": 1,
-    "totalPages": 1
+    "total": 0,
+    "totalPages": 0
   }
 }
